@@ -68,16 +68,16 @@ public abstract class SpiralSearchingAgent extends TWAgent {
             }
     		return new TWThought(TWAction.MOVE, calculateDirectionToXY(fuelStationX, fuelStationY));
     	}
-    	
     	// pick up tiles
     	if (carriedTiles.size()<3 && !isPickingUpTile) {
     		tileToBePickedUp = this.memory.getNearbyTile(getX(), getY(), 20);
     		if(tileToBePickedUp!=null) {
-    			System.out.println(name + " found a tile nearby, going to pick it up");
+    			System.out.println(name + " found a tile nearby, going to pick it up. Currently it has " + carriedTiles.size());
     			isPickingUpTile = true;
     			return new TWThought(TWAction.MOVE, calculateDirectionToXY(tileToBePickedUp.getX(), tileToBePickedUp.getY()));
     		}
     		else {
+//    			System.out.println(name + " found no nearby tile; continuing to move spiral");
     			return moveSpiral();
     		}
     	}
@@ -145,10 +145,12 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         if(action == TWAction.PICKUP) {
         	if (getEnvironment().canPickupTile(tileToBePickedUp, this)) {
         		this.pickUpTile(tileToBePickedUp);
+        		this.memory.removeObject(tileToBePickedUp);
         		tileToBePickedUp = null;
         		isPickingUpTile = false;
         		System.out.println(name + " picked up a tile. Contains " + carriedTiles.size() + " tiles");
         	}
+        	return;
         }
         
         if (action==TWAction.MOVE) {
