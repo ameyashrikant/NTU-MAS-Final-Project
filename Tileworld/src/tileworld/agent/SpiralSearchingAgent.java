@@ -1,10 +1,9 @@
-// 📄 File: SpiralSearchingAgent.java
 package tileworld.agent;
-
 import tileworld.environment.TWDirection;
 import tileworld.environment.TWFuelStation;
+import tileworld.Parameters;
+import tileworld.environment.TWTile;
 
-import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -15,174 +14,179 @@ public abstract class SpiralSearchingAgent extends TWAgent {
     protected int movesInCurrentLength = 0;
     protected int directionChanges = 0;
     protected final int stepScale = 6;
-
     protected String name;
-
+    private boolean isHeadingToFuelStation = false;
+    private int fuelStationX = -1;
+    private int fuelStationY = -1;
+    private boolean hasRefueled = false;
+    private int broadcastAttempts = 0;
+    private boolean isPickingUpTile = false;
+    private TWTile tileToBePickedUp = null;
+    private double MIN_FUEL_LEVEL;
+    private static final int MAX_BROADCAST_ATTEMPTS = 3;
     public SpiralSearchingAgent(String name, int xpos, int ypos, tileworld.environment.TWEnvironment env, double fuelLevel, TWDirection initialDir) {
         super(xpos, ypos, env, fuelLevel);
         this.name = name;
         this.currentDir = initialDir;
         this.memory = new SmartMemory(this, env.schedule, env.getxDimension(), env.getyDimension());
+        setMinFuelLevel();
     }
-
     public String getName() {
         return name;
     }
-
-    private boolean isHeadingToFuelStation = false;
-    private int fuelStationX = -1;
-    private int fuelStationY = -1;
-    private boolean hasReachedFuelStation = false;
-    private boolean hasRefueled = false;
-    private int broadcastAttempts = 0;
-    private static final int MAX_BROADCAST_ATTEMPTS = 3;
-
-    private Set<Point> knownObstacles = new HashSet<>(); // Add obstacle memory
-
-    private static class Point {
-        final int x, y;
-
-        Point(int x, int y) {
-            this.x = x;
-            this.y = y;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof Point)) return false;
-            Point p = (Point) o;
-            return x == p.x && y == p.y;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(x, y);
-        }
-    }
-
     @Override
     protected TWThought think() {
         // First check messages regardless of current state
-        if (!isHeadingToFuelStation) {
+    	if (fuelStationX==-1) {
             for (Message m : getEnvironment().getMessages()) {
                 if (m.getMessage().startsWith("FUEL:")) {
                     try {
                         String[] coords = m.getMessage().substring(5).split(",");
                         fuelStationX = Integer.parseInt(coords[0]);
                         fuelStationY = Integer.parseInt(coords[1]);
-                        isHeadingToFuelStation = true;
-                        TWAgent.setFuelStationFound();
+                        ((SmartMemory) this.memory).setFuelStationLocation(new TWFuelStation(fuelStationX, fuelStationY, getEnvironment()));;
                         System.out.println(name + " received fuel station coordinates: " + fuelStationX + "," + fuelStationY);
-                        return new TWThought(TWAction.MOVE, calculateDirectionToFuelStation());
+                        return new TWThought(TWAction.MOVE, TWDirection.Z);
                     } catch (Exception e) {
                         continue; // Try next message if this one fails
                     }
                 }
             }
+            return findFuelStation();
         }
-
-        // Handle fuel station discovery
-        TWFuelStation station = detectFuelStationInRangeFromMemory();
-        if (station != null && broadcastAttempts < MAX_BROADCAST_ATTEMPTS) {
-            TWAgent.setFuelStationFound();
-            fuelStationX = station.getX();
-            fuelStationY = station.getY();
-            isHeadingToFuelStation = true;
-            String message = "FUEL:" + station.getX() + "," + station.getY();
-            getEnvironment().receiveMessage(new Message(name, "ALL", message));
-            broadcastAttempts++;
-            System.out.println(name + " broadcasting fuel station location (attempt " + broadcastAttempts + ")");
-            return new TWThought(TWAction.MOVE, calculateDirectionToFuelStation());
-        }
-
-        // Ensure agents stay still if they have reached the fuel station and refueled
-        if (hasReachedFuelStation && hasRefueled) {
-            return new TWThought(TWAction.MOVE, TWDirection.Z);
-        }
-
-        // If at fuel station but haven't refueled yet
-        if (hasReachedFuelStation && !hasRefueled) {
-            hasRefueled = true;
-            System.out.println(name + " refueling once at fuel station");
-            return new TWThought(TWAction.REFUEL, TWDirection.Z);
-        }
-
-        // If we're heading to fuel station, continue that path
-        if (isHeadingToFuelStation) {
-            // Check if we reached the fuel station
-            if (getX() == fuelStationX && getY() == fuelStationY) {
-                hasReachedFuelStation = true;
+    	
+    	broadcastFuelStationLocation();
+    	
+    	if (getFuelLevel()<MIN_FUEL_LEVEL && !isHeadingToFuelStation) {
+    		isHeadingToFuelStation = true;
+    		return new TWThought(TWAction.MOVE, calculateDirectionToXY(fuelStationX, fuelStationY));
+    	}
+    	
+    	if (isHeadingToFuelStation) {
+    		if (getEnvironment().inFuelStation(this)) {
                 return new TWThought(TWAction.REFUEL, TWDirection.Z);
             }
-            return new TWThought(TWAction.MOVE, calculateDirectionToFuelStation());
-        }
-
-        // Only continue spiral search if we haven't found or received fuel station location
-        if (!isHeadingToFuelStation) {
-            if (fuelLevel <= 100 || stepCount >= 400) {
-                return new TWThought(TWAction.MOVE, TWDirection.Z);
-            }
-
-            // Spiral search movement
-            TWDirection dir = currentDir;
-            movesInCurrentLength++;
-            if (movesInCurrentLength == moveLength * stepScale) {
-                movesInCurrentLength = 0;
-                currentDir = currentDir.next();
-                directionChanges++;
-                if (directionChanges % 2 == 0) {
-                    moveLength++;
-                }
-            }
-            return new TWThought(TWAction.MOVE, dir);
-        }
-
+    		return new TWThought(TWAction.MOVE, calculateDirectionToXY(fuelStationX, fuelStationY));
+    	}
+    	
+    	// pick up tiles
+    	if (carriedTiles.size()<3 && !isPickingUpTile) {
+    		tileToBePickedUp = this.memory.getNearbyTile(getX(), getY(), 20);
+    		if(tileToBePickedUp!=null) {
+    			System.out.println(name + " found a tile nearby, going to pick it up");
+    			isPickingUpTile = true;
+    			return new TWThought(TWAction.MOVE, calculateDirectionToXY(tileToBePickedUp.getX(), tileToBePickedUp.getY()));
+    		}
+    		else {
+    			return moveSpiral();
+    		}
+    	}
+    	if (isPickingUpTile) {
+    		if (this.sameLocation(tileToBePickedUp)){
+    			return new TWThought(TWAction.PICKUP, TWDirection.Z);
+    		}
+    		else {
+    			return new TWThought(TWAction.MOVE, calculateDirectionToXY(tileToBePickedUp.getX(), tileToBePickedUp.getY()));
+    		}
+    	}
         return new TWThought(TWAction.MOVE, TWDirection.Z);
     }
-
+    
+    private void broadcastFuelStationLocation() {
+    	if(broadcastAttempts < MAX_BROADCAST_ATTEMPTS) {
+	    	String message = "FUEL:" + fuelStationX + "," + fuelStationY;
+	        getEnvironment().receiveMessage(new Message(name, "ALL", message));
+	        broadcastAttempts++;
+	        System.out.println(name + " broadcasting fuel station location (attempt " + broadcastAttempts + ")");
+    	}
+    }
+    
+    
+    private TWThought moveSpiral() {
+    	TWDirection dir = currentDir;
+        movesInCurrentLength++;
+        if (movesInCurrentLength == moveLength * stepScale) {
+            movesInCurrentLength = 0;
+            currentDir = currentDir.next();
+            directionChanges++;
+            if (directionChanges % 2 == 0) {
+                moveLength++;
+            }
+        }
+        return new TWThought(TWAction.MOVE, dir);
+    }
+    
+    
+    private TWThought findFuelStation() {
+    	if (((SmartMemory) this.memory).isFuelStationFound()){
+    		fuelStationX = ((SmartMemory) this.memory).getFuelStationX();
+    		fuelStationY = ((SmartMemory) this.memory).getFuelStationY();
+    		return new TWThought(TWAction.MOVE, TWDirection.Z);
+    	}
+    	return moveSpiral();
+    }
+    
     @Override
     protected void act(TWThought thought) {
-        if (thought.getAction() == TWAction.REFUEL) {
+    	TWDirection direction = thought.getDirection();
+        TWAction action = thought.getAction();
+        if (action == TWAction.REFUEL) {
             try {
-                refuel();
+            	refuel();
+            	isHeadingToFuelStation = false;
                 System.out.println(name + " refueled successfully");
             } catch (Exception ignored) {
                 System.out.println(name + " failed to refuel");
             }
             return;
         }
-
-        TWDirection direction = thought.getDirection();
-        if (direction == TWDirection.Z) {
-            return;
+        
+        
+        if(action == TWAction.PICKUP) {
+        	if (getEnvironment().canPickupTile(tileToBePickedUp, this)) {
+        		this.pickUpTile(tileToBePickedUp);
+        		tileToBePickedUp = null;
+        		isPickingUpTile = false;
+        		System.out.println(name + " picked up a tile. Contains " + carriedTiles.size() + " tiles");
+        	}
         }
-
-        // Try to move with immediate obstacle avoidance
-        if (!tryMoveWithAvoidance(direction)) {
-            System.out.println(name + " blocked at " + getX() + "," + getY());
+        
+        if (action==TWAction.MOVE) {
+        	if(direction==TWDirection.Z) {
+        		return;
+        	}
+        	else {
+        		if(tryMoveWithAvoidance(direction)) {
+        			return;
+        		}
+        		else {
+        			System.out.println(name + " got stuck");
+        		}
+        	}
         }
     }
-
     private boolean tryMoveWithAvoidance(TWDirection primaryDirection) {
-        // First try the primary direction
-        if (tryMove(primaryDirection)) {
-            return true;
-        }
-
-        // If primary direction fails, try perpendicular directions
-        TWDirection[] perpendicularDirs = getPerpendicularDirections(primaryDirection);
-        for (TWDirection altDir : perpendicularDirs) {
-            if (tryMove(altDir)) {
-                return true;
-            }
-        }
-
-        // If all perpendicular directions fail, try opposite direction
-        TWDirection opposite = getOppositeDirection(primaryDirection);
-        return tryMove(opposite);
+    	int MAX_RETRY = 3;
+    	for(int i=0; i<MAX_RETRY; i++) {
+	        // First try the primary direction
+	        if (tryMove(primaryDirection)) {
+	            return true;
+	        }
+	        // If primary direction fails, try perpendicular directions
+	        TWDirection[] perpendicularDirs = getPerpendicularDirections(primaryDirection);
+	        for (TWDirection altDir : perpendicularDirs) {
+	            if (tryMove(altDir)) {
+	                return true;
+	            }
+	        }
+	        // If all perpendicular directions fail, try opposite direction
+	        TWDirection opposite = getOppositeDirection(primaryDirection);
+	        if(tryMove(opposite)) {
+	        	return true;
+	        }
+    	}
+    	return false;
     }
-
     private TWDirection getOppositeDirection(TWDirection dir) {
         switch (dir) {
             case N: return TWDirection.S;
@@ -192,7 +196,6 @@ public abstract class SpiralSearchingAgent extends TWAgent {
             default: return TWDirection.Z;
         }
     }
-
     private boolean tryMove(TWDirection direction) {
         try {
             move(direction);
@@ -202,7 +205,6 @@ public abstract class SpiralSearchingAgent extends TWAgent {
             return false;
         }
     }
-
     private TWDirection[] getPerpendicularDirections(TWDirection dir) {
         switch (dir) {
             case N:
@@ -225,16 +227,13 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                 return new TWDirection[]{};
         }
     }
-
-    private TWDirection calculateDirectionToFuelStation() {
-        int dx = fuelStationX - getX();
-        int dy = fuelStationY - getY();
-
+    private TWDirection calculateDirectionToXY(int x, int y) {
+        int dx = x - getX();
+        int dy = y - getY();
         // At fuel station
         if (dx == 0 && dy == 0) {
             return TWDirection.Z;
         }
-
         // Alternate between X and Y movement for diagonal paths
         if (stepCount % 2 == 0) {
             if (dx != 0) {
@@ -249,5 +248,36 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                 return dx > 0 ? TWDirection.E : TWDirection.W;
             }
         }
+    }
+    /**
+     * Calculates the minimum fuel level required for an agent to reach the fueling station.
+     * This considers both the direct travel distance and the additional steps required 
+     * due to obstacles encountered along the way.
+     * 
+     * @param x The x-coordinate of the fueling station.
+     * @param y The y-coordinate of the fueling station.
+     * @param mean The average object creation time (mean) that determines how obstacles 
+     *             are distributed in the environment.
+     * @param gridSize The total grid size (environment size) represented as x * y.
+     * @return The minimum fuel level required to reach the fueling station, factoring in obstacles.
+     */
+    protected void setMinFuelLevel() {
+        // Calculate the direct distance to the fueling station
+    	int x = Parameters.xDimension;
+    	int y = Parameters.yDimension;
+    	double obstacleMean = Parameters.obstacleMean;
+        double maxDiagonalDistance = x + y;
+        
+        // Calculate the expected number of obstacles encountered along the path
+        double obstaclesEncountered = (maxDiagonalDistance) / (obstacleMean * (x*y));
+        
+        // Each obstacle adds 2 extra steps to the path
+        double extraFuelForObstacles = obstaclesEncountered * 2;
+        
+        // Total fuel level is the direct distance plus the extra fuel due to obstacles
+        double minFuelLevel = maxDiagonalDistance + extraFuelForObstacles;
+        
+        MIN_FUEL_LEVEL = minFuelLevel;
+        System.out.println(name + "'s MIN_FUEL_LEVEL is: " + MIN_FUEL_LEVEL);
     }
 }
