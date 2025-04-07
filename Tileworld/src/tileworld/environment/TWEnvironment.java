@@ -6,6 +6,11 @@ package tileworld.environment;
 import java.util.ArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 
+import agent.AgentA;
+import agent.AgentB;
+import agent.AgentC;
+import agent.AgentD;
+import agent.ManagerAgent;
 import sim.engine.SimState;
 import sim.engine.Steppable;
 import sim.field.grid.ObjectGrid2D;
@@ -114,8 +119,11 @@ public class TWEnvironment extends SimState implements Steppable {
         createAgent(new AgentB("agent2", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
         pos = this.generateRandomLocation();
         createAgent(new AgentC("agent3", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
+        // pos = this.generateRandomLocation();
+        // createAgent(new AgentD("agent4", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
+        //ManagerAgent
         pos = this.generateRandomLocation();
-        createAgent(new AgentD("agent4", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
+        createAgent(new ManagerAgent("manager", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
         
 //        
         //create the fueling station
