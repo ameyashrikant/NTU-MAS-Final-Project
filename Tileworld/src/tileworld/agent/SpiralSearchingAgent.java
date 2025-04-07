@@ -3,6 +3,7 @@ import tileworld.environment.TWDirection;
 import tileworld.environment.TWFuelStation;
 import tileworld.Parameters;
 import tileworld.environment.TWTile;
+import tileworld.environment.TWHole;
 
 import java.util.Objects;
 import java.util.Set;
@@ -18,10 +19,11 @@ public abstract class SpiralSearchingAgent extends TWAgent {
     private boolean isHeadingToFuelStation = false;
     private int fuelStationX = -1;
     private int fuelStationY = -1;
-    private boolean hasRefueled = false;
     private int broadcastAttempts = 0;
     private boolean isPickingUpTile = false;
     private TWTile tileToBePickedUp = null;
+    private TWHole holeToBeFilled = null;
+    private boolean fillHole = false;
     private double MIN_FUEL_LEVEL;
     private static final int MAX_BROADCAST_ATTEMPTS = 3;
     public SpiralSearchingAgent(String name, int xpos, int ypos, tileworld.environment.TWEnvironment env, double fuelLevel, TWDirection initialDir) {
@@ -45,7 +47,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                         fuelStationX = Integer.parseInt(coords[0]);
                         fuelStationY = Integer.parseInt(coords[1]);
                         ((SmartMemory) this.memory).setFuelStationLocation(new TWFuelStation(fuelStationX, fuelStationY, getEnvironment()));;
-                        System.out.println(name + " received fuel station coordinates: " + fuelStationX + "," + fuelStationY);
+//                        System.out.println(name + " received fuel station coordinates: " + fuelStationX + "," + fuelStationY);
                         return new TWThought(TWAction.MOVE, TWDirection.Z);
                     } catch (Exception e) {
                         continue; // Try next message if this one fails
@@ -54,10 +56,9 @@ public abstract class SpiralSearchingAgent extends TWAgent {
             }
             return findFuelStation();
         }
-    	
     	broadcastFuelStationLocation();
-    	
     	if (getFuelLevel()<MIN_FUEL_LEVEL && !isHeadingToFuelStation) {
+    		System.out.println("STAGE: REFUELLING");
     		isHeadingToFuelStation = true;
     		return new TWThought(TWAction.MOVE, calculateDirectionToXY(fuelStationX, fuelStationY));
     	}
@@ -69,15 +70,15 @@ public abstract class SpiralSearchingAgent extends TWAgent {
     		return new TWThought(TWAction.MOVE, calculateDirectionToXY(fuelStationX, fuelStationY));
     	}
     	// pick up tiles
-    	if (carriedTiles.size()<3 && !isPickingUpTile) {
+    	if (carriedTiles.size()<3 && !isPickingUpTile && !fillHole) {
+    		System.out.println("STAGE: PICKING UP TILES");
     		tileToBePickedUp = this.memory.getNearbyTile(getX(), getY(), 20);
     		if(tileToBePickedUp!=null) {
-    			System.out.println(name + " found a tile nearby, going to pick it up. Currently it has " + carriedTiles.size());
+//    			System.out.println(name + " found a tile nearby, going to pick it up. Currently it has " + carriedTiles.size());
     			isPickingUpTile = true;
     			return new TWThought(TWAction.MOVE, calculateDirectionToXY(tileToBePickedUp.getX(), tileToBePickedUp.getY()));
     		}
     		else {
-//    			System.out.println(name + " found no nearby tile; continuing to move spiral");
     			return moveSpiral();
     		}
     	}
@@ -89,7 +90,31 @@ public abstract class SpiralSearchingAgent extends TWAgent {
     			return new TWThought(TWAction.MOVE, calculateDirectionToXY(tileToBePickedUp.getX(), tileToBePickedUp.getY()));
     		}
     	}
-        return new TWThought(TWAction.MOVE, TWDirection.Z);
+    	
+    	if (fillHole) {
+    		System.out.println("STAGE: FILLING HOLES");
+    		if (holeToBeFilled == null) {
+    			holeToBeFilled = this.memory.getNearbyHole(getX(), getY(), 20);
+    			if(holeToBeFilled != null) {
+//    				System.out.println(name + " found a hole neaby, going to fill it");
+    				return new TWThought(TWAction.MOVE, calculateDirectionToXY(holeToBeFilled.getX(), holeToBeFilled.getY()));
+    			}
+    			else {
+//    				System.out.println(name + " no hole nearby");
+    				return moveSpiral();
+    			}
+    		}
+    		else {
+    			if (this.sameLocation(holeToBeFilled)) {
+    				return new TWThought(TWAction.PUTDOWN, TWDirection.Z);
+    			}
+    			else {
+    				return new TWThought(TWAction.MOVE, calculateDirectionToXY(holeToBeFilled.getX(), holeToBeFilled.getY()));
+    			}
+    		}
+    	}
+    	System.out.println("Here");
+        return moveSpiral();
     }
     
     private void broadcastFuelStationLocation() {
@@ -97,7 +122,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
 	    	String message = "FUEL:" + fuelStationX + "," + fuelStationY;
 	        getEnvironment().receiveMessage(new Message(name, "ALL", message));
 	        broadcastAttempts++;
-	        System.out.println(name + " broadcasting fuel station location (attempt " + broadcastAttempts + ")");
+//	        System.out.println(name + " broadcasting fuel station location (attempt " + broadcastAttempts + ")");
     	}
     }
     
@@ -148,7 +173,35 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         		this.memory.removeObject(tileToBePickedUp);
         		tileToBePickedUp = null;
         		isPickingUpTile = false;
-        		System.out.println(name + " picked up a tile. Contains " + carriedTiles.size() + " tiles");
+//        		System.out.println(name + " picked up a tile. Contains " + carriedTiles.size() + " tiles");
+//        		System.out.println(name + " current direction: " + currentDir);
+        		if (carriedTiles.size()==3) {
+        			fillHole = true;
+        			System.out.println(name + " will fill holes now");
+        		}
+        	}
+        	else {
+        		this.memory.removeObject(tileToBePickedUp);
+        		tileToBePickedUp = null;
+        		isPickingUpTile = false;
+        	}
+        	return;
+        }
+        
+        if (action == TWAction.PUTDOWN) {
+        	if (getEnvironment().canPutdownTile(holeToBeFilled, this)) {
+        		this.putTileInHole(holeToBeFilled);
+        		this.memory.removeObject(holeToBeFilled);
+        		holeToBeFilled = null;
+//        		System.out.println(name + " has filled a hole");
+        		if (carriedTiles.size()==0) {
+        			fillHole = false;
+        		}
+        	}
+        	else {
+        		this.memory.removeObject(holeToBeFilled);
+        		holeToBeFilled = null;
+//        		fillHole = false;
         	}
         	return;
         }
@@ -166,6 +219,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         		}
         	}
         }
+        
     }
     private boolean tryMoveWithAvoidance(TWDirection primaryDirection) {
     	int MAX_RETRY = 3;

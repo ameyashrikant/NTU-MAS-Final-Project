@@ -8,6 +8,7 @@ import sim.engine.Schedule;
 import sim.field.grid.ObjectGrid2D;
 import sim.util.Bag;
 import sim.util.Int2D;
+import sim.field.grid.ObjectGrid2D;
 import sim.util.IntBag;
 import tileworld.environment.NeighbourSpiral;
 import tileworld.Parameters;
@@ -41,7 +42,7 @@ import tileworld.environment.TWTile;
 public class TWAgentWorkingMemory {
 
 	/**
-	 * Access to Scedule (TWEnvironment) so that we can retrieve the current timestep of the simulation.
+	 * Access to Schedule (TWEnvironment) so that we can retrieve the current timestep of the simulation.
 	 */
 	private Schedule schedule;
 	private TWAgent me;
@@ -83,25 +84,7 @@ public class TWAgentWorkingMemory {
 		this.memoryGrid = new ObjectGrid2D(me.getEnvironment().getxDimension(), me.getEnvironment().getyDimension());
 	}
 
-	/**
-	 * Called at each time step, updates the memory map of the agent.
-	 * Note that some objects may disappear or be moved, in which case part of
-	 * sensed may contain null objects
-	 *
-	 * Also note that currently the agent has no sense of moving objects, so
-	 * an agent may remember the same object at two locations simultaneously.
-	 * 
-	 * Other agents in the grid are sensed and passed to this function. But it
-	 * is currently not used for anything. Do remember that an agent sense itself
-	 * too.
-	 *
-	 * @param sensedObjects bag containing the sensed objects
-	 * @param objectXCoords bag containing x coordinates of objects
-	 * @param objectYCoords bag containing y coordinates of object
-	 * @param sensedAgents bag containing the sensed agents
-	 * @param agentXCoords bag containing x coordinates of agents
-	 * @param agentYCoords bag containing y coordinates of agents
-	 */
+	
 	public void updateMemory(Bag sensedObjects, IntBag objectXCoords, IntBag objectYCoords, Bag sensedAgents, IntBag agentXCoords, IntBag agentYCoords) {
 		//reset the closest objects for new iteration of the loop (this is short
 		//term observation memory if you like) It only lasts one timestep
@@ -110,17 +93,14 @@ public class TWAgentWorkingMemory {
 		//must all be same size.
 		assert (sensedObjects.size() == objectXCoords.size() && sensedObjects.size() == objectYCoords.size());
 
-		//        me.getEnvironment().getMemoryGrid().clear();  // THis is equivalent to only having sensed area in memory
-		//       this.decayMemory();       // You might want to think about when to call the decay function as well.
+//		me.getEnvironment().getMemoryGrid().clear();  // THis is equivalent to only having sensed area in memory
+		this.decayMemory();       // You might want to think about when to call the decay function as well.
 		for (int i = 0; i < sensedObjects.size(); i++) {
 			TWEntity o = (TWEntity) sensedObjects.get(i);
 			if (!(o instanceof TWObject)) {
 				continue;
 			}
 			
-			//if nothing in memory currently, then were increasing the number 
-			//of items we have in memory by 1
-			//if(objects[objectXCoords.get(i)][objectYCoords.get(i)] == null) memorySize++;
 			if(objects[o.getX()][o.getY()] == null) memorySize++;
 			
 			//Add the object to memory
@@ -131,30 +111,9 @@ public class TWAgentWorkingMemory {
 			updateClosest(o);
 
 		}
-		//       Agents are currently not added to working memory. Depending on how 
-		//       communication is modelled you might want to do this.
-		//        neighbouringAgents.clear();
-		//        for (int i = 0; i < sensedAgents.size(); i++) {
-		//            
-		//            
-		//            if (!(sensedAgents.get(i) instanceof TWAgent)) {
-		//                assert false;
-		//            }
-		//            TWAgent a = (TWAgent) sensedAgents.get(i);
-		//            if(a.equals(me)){
-		//                continue;
-		//            }
-		//            neighbouringAgents.add(a);
-		//        }
+		
 	}
 
-	//    public TWAgent getNeighbour(){
-	//        if(neighbouringAgents.isEmpty()){
-	//            return null;
-	//        }else{
-	//            return neighbouringAgents.get(0);
-	//        }
-	//    }
 
 	/**
 	 * updates memory using 2d array of sensor range - currently not used
@@ -174,18 +133,18 @@ public class TWAgentWorkingMemory {
 	 * remove probabilistically (exponential decay of memory)
 	 */
 	public void decayMemory() {
-		// put some decay on other memory pieces (this will require complete
-		// iteration over memory though, so expensive.
-		//This is a simple example of how to do this.
-		//        for (int x = 0; x < this.objects.length; x++) {
-		//       for (int y = 0; y < this.objects[x].length; y++) {
-		//           TWAgentPercept currentMemory =  objects[x][y];
-		//           if(currentMemory!=null && currentMemory.getT() < schedule.getTime()-MAX_TIME){
-		//               memoryGrid.set(x, y, null);
-		//               memorySize--;
-		//           }
-		//       }
-		//   }
+//		 put some decay on other memory pieces (this will require complete
+//		 iteration over memory though, so expensive.
+//		This is a simple example of how to do this.
+		        for (int x = 0; x < this.objects.length; x++) {
+		       for (int y = 0; y < this.objects[x].length; y++) {
+		           TWAgentPercept currentMemory =  objects[x][y];
+		           if(currentMemory!=null && currentMemory.getT() < schedule.getTime()-MAX_TIME){
+		               memoryGrid.set(x, y, null);
+		               memorySize--;
+		           }
+		       }
+		   }
 	}
 
 
@@ -231,9 +190,6 @@ public class TWAgentWorkingMemory {
 	public int getMemorySize() {
 		return memorySize;
 	}
-
-
-
 	/**
 	 * Returns the nearest object that has been remembered recently where recently
 	 * is defined by a number of timesteps (threshold)
@@ -284,12 +240,10 @@ public class TWAgentWorkingMemory {
 				}
 			}
 		}
-
 		//this will either be null or the object of Class type which we have
 		//seen most recently but longer ago than now-threshold.
 		return ret;
 	}
-
 	/**
 	 * Used for invalidating the plan, returns the object of a particular type
 	 * (Tile or Hole) which is closest to the agent and within it's sensor range
