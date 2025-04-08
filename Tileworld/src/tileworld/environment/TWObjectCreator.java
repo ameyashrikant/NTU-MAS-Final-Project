@@ -9,7 +9,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import sim.util.Bag;
 import sim.util.Int2D;
-import tileworld.Parameters;
+import tileworld.EnvParameters;
 
 /**
  * TWObjectCreator
@@ -89,7 +89,7 @@ public class TWObjectCreator<T> {
 
     /**
      * Creates an instance of the appropriate type (according to T) and then
-     * sets the relevant parameters such as deathtime and location
+     * sets the relevant EnvParameters such as deathtime and location
      *
      * @param clazz class of type to create
      * @param time timestamp of creation
@@ -104,7 +104,7 @@ public class TWObjectCreator<T> {
 
         T o = null;
         try {
-            o = clazz.getDeclaredConstructor(classes).newInstance(pos, env, time, (time + Parameters.lifeTime));
+            o = clazz.getDeclaredConstructor(classes).newInstance(pos, env, time, (time + EnvParameters.lifeTime));
         } catch (IllegalArgumentException ex) {
             Logger.getLogger(TWObjectCreator.class.getName()).log(Level.SEVERE, null, ex);
         } catch (InvocationTargetException ex) {

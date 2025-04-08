@@ -11,8 +11,7 @@ import sim.engine.Steppable;
 import sim.field.grid.ObjectGrid2D;
 import sim.util.Bag;
 import sim.util.Int2D;
-import sun.font.TrueTypeFont;
-import tileworld.Parameters;
+import tileworld.EnvParameters;
 import tileworld.TWGUI;
 import tileworld.agent.Message;
 import tileworld.agent.*;
@@ -34,9 +33,9 @@ import tileworld.agent.TWAgent;
 public class TWEnvironment extends SimState implements Steppable {
 
 
-    //Parameters to configure the environment - read from main parameter file
-    private final int xDimension = Parameters.xDimension; //size in cells
-    private final int yDimension = Parameters.yDimension;
+    //EnvParameters to configure the environment - read from main parameter file
+    private final int xDimension = EnvParameters.xDimension; //size in cells
+    private final int yDimension = EnvParameters.yDimension;
     
     /**
      * grid environment which stores all TWEntities, ObjectGrd is preferred over
@@ -79,12 +78,12 @@ public class TWEnvironment extends SimState implements Steppable {
 
         // create object creation distributions (assumed normal for now)
 
-        this.tileCreator = new TWObjectCreator<TWTile>(Parameters.tileMean, Parameters.tileDev,
+        this.tileCreator = new TWObjectCreator<TWTile>(EnvParameters.tileMean, EnvParameters.tileDev,
                 tiles, this.random, new TWTile(), this);
-        this.holeCreator = new TWObjectCreator<TWHole>(Parameters.holeMean, Parameters.holeDev,
+        this.holeCreator = new TWObjectCreator<TWHole>(EnvParameters.holeMean, EnvParameters.holeDev,
                 holes, this.random, new TWHole(), this);
-        this.obstacleCreator = new TWObjectCreator<TWObstacle>(Parameters.obstacleMean,
-                Parameters.obstacleDev, obstacles, this.random, new TWObstacle(), this);
+        this.obstacleCreator = new TWObjectCreator<TWObstacle>(EnvParameters.obstacleMean,
+                EnvParameters.obstacleDev, obstacles, this.random, new TWObstacle(), this);
 
         tiles = new Bag();
         holes = new Bag();
@@ -109,21 +108,18 @@ public class TWEnvironment extends SimState implements Steppable {
         
         //Now we create some agents
         Int2D pos = this.generateRandomLocation();
-        createAgent(new AgentA("agent1", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
+        createAgent(new AgentA("agent1", pos.getX(), pos.getY(), this, EnvParameters.defaultFuelLevel));
         pos = this.generateRandomLocation();
-        createAgent(new AgentB("agent2", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
+        createAgent(new AgentB("agent2", pos.getX(), pos.getY(), this, EnvParameters.defaultFuelLevel));
         pos = this.generateRandomLocation();
-        createAgent(new AgentC("agent3", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
+        createAgent(new AgentC("agent3", pos.getX(), pos.getY(), this, EnvParameters.defaultFuelLevel));
         pos = this.generateRandomLocation();
-        createAgent(new AgentD("agent4", pos.getX(), pos.getY(), this, Parameters.defaultFuelLevel));
+        createAgent(new AgentD("agent4", pos.getX(), pos.getY(), this, EnvParameters.defaultFuelLevel));
         
 //        
         //create the fueling station
         pos = this.generateRandomLocation();
         fuelingStation = new TWFuelStation(pos.getX(), pos.getY(),this);
-
-
-
     }
 
     private void createTWObjects(double time) {
@@ -170,15 +166,12 @@ public class TWEnvironment extends SimState implements Steppable {
     }
 
     public void step(SimState state) {
-        
     	double time = state.schedule.getTime();
         // create new objects
         createTWObjects(time);
         // remove old objects (dead ones)
         removeTWObjects(time);
         messages.clear(); // clear the messages in every time step
-        
-        
     }
     
     public ArrayList<Message> getMessages(){
@@ -186,7 +179,7 @@ public class TWEnvironment extends SimState implements Steppable {
     }
     
     public void receiveMessage(Message m){
-    	messages.add(m);
+        messages.add(m);
     }
     
     /**

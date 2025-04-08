@@ -4,7 +4,7 @@
 package tileworld.environment;
 
 import sim.util.Int2D;
-import tileworld.Parameters;
+import tileworld.EnvParameters;
 
 /**
  * TWObject
@@ -20,7 +20,7 @@ import tileworld.Parameters;
  */
 public class TWObject extends TWEntity{
 
-	protected static final int lifeTime = Parameters.lifeTime;
+	protected static final int lifeTime = EnvParameters.lifeTime;
 
 	private double creationTime;
 	private double dTime;
