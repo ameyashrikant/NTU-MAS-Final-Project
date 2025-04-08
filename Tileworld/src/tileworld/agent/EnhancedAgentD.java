@@ -6,15 +6,18 @@ import tileworld.planners.AstarPathGenerator;
 import tileworld.planners.TWPath;
 import tileworld.planners.TWPathStep;
 import sim.field.grid.ObjectGrid2D;
+import tileworld.messages.ExtendedMessage;  // Add this import
+import tileworld.messages.MessageType;      // Add this import
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet; // For thread safety
 import java.util.stream.Collectors;
 
 public class EnhancedAgentD extends AgentD implements MessageReceiver {
     private static final String BROADCAST_PREFIX = "INFO:";
     private static final int BROADCAST_INTERVAL = 7; // Less frequent
     private int stepsSinceLastBroadcast = 0;
-    private final Set<Point> broadcastedLocations = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private final Set<Point> broadcastedLocations = new CopyOnWriteArraySet<>();
     private final Map<Point, Long> exploredTimestamps = new HashMap<>();
     private static final long REVISIT_THRESHOLD = 35; // Steps before revisiting a location
     
@@ -44,6 +47,9 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     private int holesFound = 0;
     private int tilesCollected = 0;
     private long totalDistance = 0;
+
+    private TaskManager taskManager;
+    private Set<TWHole> assignedHoles = new HashSet<>();
 
     private static class Point {
         final int x, y;
@@ -109,6 +115,7 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     public EnhancedAgentD(String name, int xpos, int ypos, TWEnvironment env, double fuelLevel) {
         super(name, xpos, ypos, env, fuelLevel);
         this.pathGenerator = new AstarPathGenerator(env, this, Parameters.defaultSensorRange * 2);
+        this.taskManager = new TaskManager(env);
     }
 
     @Override
@@ -134,6 +141,22 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
 
         // Perform periodic cleanup
         cleanupOldData(currentTime);
+
+        // Handle task manager updates
+        TaskManager.TaskPriority highestPriority = taskManager.getHighestPriorityTask();
+        if (highestPriority != null) {
+            TWEntity priorityEntity = highestPriority.getEntity();
+            if (priorityEntity instanceof TWHole) {
+                TWHole hole = (TWHole) priorityEntity;
+                if (!assignedHoles.contains(hole)) {
+                    TWHole assigned = taskManager.assignNearestUrgentHole(this, getX(), getY());
+                    if (assigned != null) {
+                        assignedHoles.add(assigned);
+                        return moveTowardsLocation(assigned.getX(), assigned.getY());
+                    }
+                }
+            }
+        }
 
         return getOptimizedMovement();
     }
@@ -188,38 +211,35 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     }
 
     private TWEntity findBestTargetInQuadrant() {
-        ObjectGrid2D memoryGrid = getMemory().getMemoryGrid();
-        int range = Parameters.defaultSensorRange;
         TWEntity bestTarget = null;
         double bestScore = Double.NEGATIVE_INFINITY;
-        int midX = getEnvironment().getxDimension() / 2;
-        int midY = getEnvironment().getyDimension() / 2;
 
-        for (int dx = -range; dx <= range; dx++) {
-            for (int dy = -range; dy <= range; dy++) {
-                int newX = getX() + dx;
-                int newY = getY() + dy;
-                
-                if (!isInBounds(newX, newY) || !isInQuadrant(newX, newY, midX, midY)) {
-                    continue;
-                }
-                
-                Object obj = memoryGrid.get(newX, newY);
-                if (obj instanceof TWHole) {
-                    TWHole hole = (TWHole) obj;
-                    double timeLeft = hole.getTimeLeft(getEnvironment().schedule.getTime());
-                    double distance = Math.abs(dx) + Math.abs(dy);
-                    double score = (timeLeft * timeLeft) / (distance + 0.5); // Favor holes with more time left
-                    
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestTarget = hole;
-                    }
+        // First check assigned holes
+        for (TWHole hole : assignedHoles) {
+            if (hole.getTimeLeft(getEnvironment().schedule.getTime()) > 0) {
+                double score = calculateTaskScore(hole);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestTarget = hole;
                 }
             }
         }
-        
+
+        // If no assigned holes, look for high-priority tasks
+        if (bestTarget == null) {
+            TaskManager.TaskPriority priority = taskManager.getHighestPriorityTask();
+            if (priority != null) {
+                bestTarget = priority.getEntity();
+            }
+        }
+
         return bestTarget;
+    }
+
+    private double calculateTaskScore(TWEntity entity) {
+        double priority = taskManager.calculatePriority(entity); // Now accessible
+        double distance = getDistance(getX(), getY(), entity.getX(), entity.getY());
+        return priority / (distance + 1);
     }
 
     private TWThought moveToQuadrantCenter(int quadrant) {
@@ -442,6 +462,11 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
                 !status.equals(getName()));
     }
 
+    /**
+     * Evaluates and selects the next quadrant based on density and agent distribution.
+     * 
+     * @return The selected quadrant index (0-3).
+     */
     private int selectQuadrantByDensity() {
         if (currentQuadrant != -1 && !isQuadrantOvercrowded(currentQuadrant)) {
             HoleDensityTracker tracker = quadrantDensity.get(currentQuadrant);
@@ -580,12 +605,27 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     }
 
     public void receiveMessage(Message m) {
-        String content = m.getMessage();
-        if (content.startsWith(BROADCAST_PREFIX)) {
-            if (content.contains("STATUS:")) {
-                handleStatusMessage(content);
-            } else if (content.contains("DENSITY:")) {
-                handleDensityMessage(content);
+        if (m instanceof ExtendedMessage) {
+            ExtendedMessage em = (ExtendedMessage) m;
+            MessageType type = em.getType();
+
+            if (type == MessageType.DENSITY_UPDATE) {
+                handleDensityMessage(m.getMessage());
+            } else if (type == MessageType.AGENT_STATUS) {
+                handleStatusMessage(m.getMessage());
+            } else if (type == MessageType.MANAGER_DIRECTIVE) {
+                handleManagerDirective(m.getMessage());
+            }
+        } else {
+            String content = m.getMessage();
+            if (content.startsWith(BROADCAST_PREFIX)) {
+                if (content.contains("STATUS:")) {
+                    handleStatusMessage(content);
+                } else if (content.contains("DENSITY:")) {
+                    handleDensityMessage(content);
+                } else if (content.contains("TASK_COMPLETE:")) {
+                    handleTaskCompletionMessage(content);
+                }
             }
         }
     }
@@ -624,6 +664,20 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
             System.out.println("STAGE: DENSITY INFO - Agent " + getName() + 
                 " Q" + quadrant + " Density:" + String.format("%.2f", receivedDensity));
         }
+    }
+
+    private void handleTaskCompletionMessage(String message) {
+        String[] parts = message.substring(BROADCAST_PREFIX.length()).split(":");
+        if (parts.length == 2 && parts[0].equals("TASK_COMPLETE")) {
+            String[] coords = parts[1].split(",");
+            int x = Integer.parseInt(coords[0]);
+            int y = Integer.parseInt(coords[1]);
+            assignedHoles.removeIf(hole -> hole.getX() == x && hole.getY() == y);
+        }
+    }
+
+    private void handleManagerDirective(String message) {
+        // Handle manager directives if needed
     }
 
     private TWFuelStation getNearestFuelStation() {

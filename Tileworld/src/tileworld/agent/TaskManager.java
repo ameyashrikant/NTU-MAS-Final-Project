@@ -16,6 +16,7 @@ public class TaskManager implements Steppable {
     private Set<TWTile> availableTiles;
     private PriorityQueue<TaskPriority> taskQueue;
     private Map<TWEntity, Double> entityDecayRates;
+    private Map<TWEntity, Double> priorityCache;
     private static final int TASK_TIMEOUT = 20;
     private double lastChangeRate = 0.0;
     private long lastUpdateTime = 0;
@@ -56,6 +57,7 @@ public class TaskManager implements Steppable {
             Double.compare(b.getCurrentPriority(environment.schedule.getTime()),
                           a.getCurrentPriority(environment.schedule.getTime())));
         this.entityDecayRates = new HashMap<>();
+        this.priorityCache = new HashMap<>();
         environment.schedule.scheduleRepeating(this);
     }
 
@@ -162,26 +164,49 @@ public class TaskManager implements Steppable {
         taskQueue.offer(newTask);
     }
 
-    private double calculatePriority(TWEntity entity) {
-        double currentTime = environment.schedule.getTime();
-        double timeLeft = 0;
-        double distance = 0;
-        double environmentDynamism = getEnvironmentDynamism();
+    public double calculatePriority(TWEntity entity) {
+        if (entity == null) return 0.0;
+
+        // Check cache first
+        if (priorityCache.containsKey(entity)) {
+            return priorityCache.get(entity);
+        }
+
+        double priority = 0.0;
 
         if (entity instanceof TWHole) {
             TWHole hole = (TWHole) entity;
-            timeLeft = hole.getTimeLeft(currentTime);
-            distance = getDistanceToNearestTile(hole);
-            return (1.0 / Math.max(timeLeft, 0.1)) * (1.0 / Math.max(distance, 0.1)) * 
-                   (1 + environmentDynamism) * 2.0;
+            double timeLeft = hole.getTimeLeft(environment.schedule.getTime());
+            priority = calculateHolePriority(hole, timeLeft);
         } else if (entity instanceof TWTile) {
-            TWTile tile = (TWTile) entity;
-            timeLeft = tile.getTimeLeft(currentTime);
-            distance = getDistanceToNearestHole(tile);
-            return (1.0 / Math.max(timeLeft, 0.1)) * (1.0 / Math.max(distance, 0.1)) * 
-                   (1 + environmentDynamism);
+            priority = 0.5; // Base priority for tiles
         }
-        return 0;
+
+        // Cache the calculated priority
+        priorityCache.put(entity, priority);
+        return priority;
+    }
+
+    private double calculateHolePriority(TWHole hole, double timeLeft) {
+        if (timeLeft <= 0) return 0.0;
+
+        // Higher priority for holes that are about to expire
+        double urgencyFactor = 1.0 / (timeLeft + 1);
+
+        // Consider hole's position and surrounding context
+        double positionFactor = calculatePositionFactor(hole);
+
+        return urgencyFactor * positionFactor * 10.0; // Scale factor
+    }
+
+    private double calculatePositionFactor(TWHole hole) {
+        // Consider edge cases and position-based priority
+        int distanceFromEdge = Math.min(
+            Math.min(hole.getX(), environment.getxDimension() - hole.getX()),
+            Math.min(hole.getY(), environment.getyDimension() - hole.getY())
+        );
+
+        return 1.0 + (0.2 * distanceFromEdge / environment.getxDimension());
     }
 
     private double estimateDecayRate(TWEntity entity) {
