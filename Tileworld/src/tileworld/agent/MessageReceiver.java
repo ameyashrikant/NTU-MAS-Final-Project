@@ -1,4 +1,4 @@
-package tileworld.environment;
+package tileworld.agent;
 
 public interface MessageReceiver {
     void receiveMessage(Message m);

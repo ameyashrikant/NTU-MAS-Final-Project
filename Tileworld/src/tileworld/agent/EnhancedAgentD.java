@@ -691,4 +691,16 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
         }
         return null;
     }
+
+    private void processWorkerMessages() {
+        // Create a copy of the messages to avoid ConcurrentModificationException
+        List<Message> messagesToProcess = new ArrayList<>(getEnvironment().getMessages());
+        
+        for (Message message : messagesToProcess) {
+            // ...existing code for processing messages...
+        }
+        
+        // Optionally clear processed messages if needed
+        getEnvironment().getMessages().removeAll(messagesToProcess);
+    }
 }

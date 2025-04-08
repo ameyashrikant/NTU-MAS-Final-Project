@@ -38,7 +38,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         super(xpos, ypos, env, fuelLevel);
         this.name = name;
         this.currentDir = initialDir;
-        this.memory = new SmartMemory(this, env.schedule, env.getxDimension(), env.getyDimension());
+        this.memory = new SmartMemory(this);
         this.pathGenerator = new AstarPathGenerator(env, this, Parameters.xDimension * Parameters.yDimension);
         setMinFuelLevel();
     }

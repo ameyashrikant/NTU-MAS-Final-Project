@@ -89,7 +89,7 @@ public class TWObjectCreator<T> {
 
     /**
      * Creates an instance of the appropriate type (according to T) and then
-     * sets the relevant EnvParameters such as deathtime and location
+     * sets the relevant parameters such as deathtime and location
      *
      * @param clazz class of type to create
      * @param time timestamp of creation

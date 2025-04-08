@@ -1,108 +1,89 @@
 package tileworld.agent;
+import sim.util.Bag;
+import sim.util.IntBag;
+import tileworld.environment.TWFuelStation;
 
-import tileworld.environment.*;
-import java.util.*;
+public class SmartMemory extends TWAgentWorkingMemory {
+	private int fuelStationX = -1;
+	private int fuelStationY = -1;
+	private TWFuelStation cachedFuelStation = null;
 
-public class SmartMemory extends TWAgentMemory {
-    private Set<TWHole> knownHoles;
-    private Set<TWTile> knownTiles;
-    private TWFuelStation fuelStation;
-    private static final int MEMORY_DURATION = 100; // How long to remember objects
-    
-    private class MemoryEntry<T> {
-        T object;
-        long timestamp;
-        
-        MemoryEntry(T object) {
-            this.object = object;
-            this.timestamp = System.currentTimeMillis();
-        }
+    public SmartMemory(TWAgent agent, sim.engine.Schedule schedule, int xDim, int yDim) {
+        super(agent, schedule, xDim, yDim);
     }
-    
-    private Map<String, MemoryEntry<TWHole>> holeMemory;
-    private Map<String, MemoryEntry<TWTile>> tileMemory;
 
+    /**
+     * Convenience constructor that takes just the agent and extracts other parameters
+     */
     public SmartMemory(TWAgent agent) {
-        super(agent);
-        this.knownHoles = new HashSet<>();
-        this.knownTiles = new HashSet<>();
-        this.holeMemory = new HashMap<>();
-        this.tileMemory = new HashMap<>();
+        super(agent, 
+              agent.getEnvironment().schedule, 
+              agent.getEnvironment().getxDimension(), 
+              agent.getEnvironment().getyDimension());
+        
+        // Initialize fields
+        this.fuelStationX = -1;
+        this.fuelStationY = -1;
+        this.cachedFuelStation = null;
     }
 
     @Override
-    public void see(TWEntity entity) {
-        super.see(entity);
-        String key = getLocationKey(entity.getX(), entity.getY());
-        
-        if (entity instanceof TWHole) {
-            TWHole hole = (TWHole) entity;
-            holeMemory.put(key, new MemoryEntry<>(hole));
-            knownHoles.add(hole);
-        } else if (entity instanceof TWTile) {
-            TWTile tile = (TWTile) entity;
-            tileMemory.put(key, new MemoryEntry<>(tile));
-            knownTiles.add(tile);
-        } else if (entity instanceof TWFuelStation) {
-            fuelStation = (TWFuelStation) entity;
+    public void updateMemory(Bag sensedObjects, IntBag objectXCoords, IntBag objectYCoords, Bag sensedAgents, IntBag agentXCoords, IntBag agentYCoords) {
+        super.updateMemory(sensedObjects, objectXCoords, objectYCoords, sensedAgents, agentXCoords, agentYCoords);
+        // Add support for detecting fuel station
+        if (isFuelStationFound()) {
+        	return;
+        }
+        for (int i = 0; i < sensedObjects.size(); i++) {
+            Object o = sensedObjects.get(i);
+            if (o instanceof TWFuelStation) {
+                TWFuelStation tf = (TWFuelStation) o;
+                this.getMemoryGrid().set(tf.getX(), tf.getY(), tf);
+                fuelStationX = tf.getX();
+                fuelStationY = tf.getY();
+                System.out.println("Fuel station is present at: (" + fuelStationX + ", " + fuelStationY + ")");
+                break;
+            }       
         }
     }
-
-    public Set<TWHole> getKnownHoles() {
-        cleanupOldMemories();
-        return new HashSet<>(knownHoles);
-    }
-
-    public Set<TWTile> getKnownTiles() {
-        cleanupOldMemories();
-        return new HashSet<>(knownTiles);
-    }
-
-    private void cleanupOldMemories() {
-        long currentTime = System.currentTimeMillis();
-        
-        // Clean up holes
-        Iterator<Map.Entry<String, MemoryEntry<TWHole>>> holeIterator = holeMemory.entrySet().iterator();
-        while (holeIterator.hasNext()) {
-            Map.Entry<String, MemoryEntry<TWHole>> entry = holeIterator.next();
-            if (currentTime - entry.getValue().timestamp > MEMORY_DURATION) {
-                knownHoles.remove(entry.getValue().object);
-                holeIterator.remove();
-            }
-        }
-        
-        // Clean up tiles
-        Iterator<Map.Entry<String, MemoryEntry<TWTile>>> tileIterator = tileMemory.entrySet().iterator();
-        while (tileIterator.hasNext()) {
-            Map.Entry<String, MemoryEntry<TWTile>> entry = tileIterator.next();
-            if (currentTime - entry.getValue().timestamp > MEMORY_DURATION) {
-                knownTiles.remove(entry.getValue().object);
-                tileIterator.remove();
-            }
-        }
-    }
-
-    private String getLocationKey(int x, int y) {
-        return x + "," + y;
-    }
-
-    public TWHole getHoleAt(int x, int y) {
-        String key = getLocationKey(x, y);
-        MemoryEntry<TWHole> entry = holeMemory.get(key);
-        return entry != null ? entry.object : null;
-    }
-
-    public TWTile getTileAt(int x, int y) {
-        String key = getLocationKey(x, y);
-        MemoryEntry<TWTile> entry = tileMemory.get(key);
-        return entry != null ? entry.object : null;
-    }
-
+    
     public boolean isFuelStationFound() {
-        return fuelStation != null;
+    	return fuelStationX != -1;
     }
 
+    public void setFuelStationLocation(TWFuelStation o) {
+    	fuelStationX = o.getX();
+    	fuelStationY = o.getY();
+    }
+
+    public int getFuelStationX() {
+    	return fuelStationX;
+    }
+
+    public int getFuelStationY() {
+    	return fuelStationY;
+    }
+
+    /**
+     * Get the fuel station object from memory
+     * @return The fuel station object, or null if not found
+     */
     public TWFuelStation getFuelStation() {
-        return fuelStation;
+        // If we've already found and cached the fuel station, return it
+        if (cachedFuelStation != null) {
+            return cachedFuelStation;
+        }
+        
+        // If we know the coordinates but don't have the object cached
+        if (isFuelStationFound()) {
+            // Look in the memory grid
+            Object obj = this.getMemoryGrid().get(fuelStationX, fuelStationY);
+            if (obj instanceof TWFuelStation) {
+                cachedFuelStation = (TWFuelStation) obj;
+                return cachedFuelStation;
+            }
+        }
+        
+        return null;
     }
 }
