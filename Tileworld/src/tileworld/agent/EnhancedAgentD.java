@@ -2,6 +2,9 @@ package tileworld.agent;
 
 import tileworld.Parameters;
 import tileworld.environment.*;
+import tileworld.planners.AstarPathGenerator;
+import tileworld.planners.TWPath;
+import tileworld.planners.TWPathStep;
 import sim.field.grid.ObjectGrid2D;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,6 +35,15 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     private final Map<Integer, HoleDensityTracker> quadrantDensity = new HashMap<>();
     private static final int DENSITY_UPDATE_INTERVAL = 12; // Even number for better synchronization
     private int stepsSinceDensityUpdate = 0;
+
+    // Add A* pathfinding and performance metrics
+    private TWPath currentPath = null;
+    private AstarPathGenerator pathGenerator;
+    private static final double FUEL_CRITICAL = 0.15;
+    private static final double FUEL_LOW = 0.3;
+    private int holesFound = 0;
+    private int tilesCollected = 0;
+    private long totalDistance = 0;
 
     private static class Point {
         final int x, y;
@@ -96,6 +108,7 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
 
     public EnhancedAgentD(String name, int xpos, int ypos, TWEnvironment env, double fuelLevel) {
         super(name, xpos, ypos, env, fuelLevel);
+        this.pathGenerator = new AstarPathGenerator(env, this, Parameters.defaultSensorRange * 2);
     }
 
     @Override
@@ -131,9 +144,20 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     }
 
     private TWThought getOptimizedMovement() {
-        // Quick fuel check first
-        if (getFuelLevel() < Parameters.defaultFuelLevel * 0.2) { // More aggressive
+        if (getFuelLevel() < Parameters.defaultFuelLevel * FUEL_CRITICAL) {
+            System.out.println("STAGE: CRITICAL FUEL - Agent " + getName());
             return super.think();
+        }
+
+        if (getFuelLevel() < Parameters.defaultFuelLevel * FUEL_LOW) {
+            System.out.println("STAGE: LOW FUEL CHECK - Agent " + getName());
+            TWFuelStation station = getNearestFuelStation();
+            if (station != null) {
+                double distanceToFuel = getDistance(getX(), getY(), station.getX(), station.getY());
+                if (distanceToFuel * 1.5 > getFuelLevel()) {
+                    return moveTowardsLocation(station.getX(), station.getY());
+                }
+            }
         }
 
         // Cache environment dimensions
@@ -142,20 +166,24 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
 
         // Quick quadrant check
         if (!isInQuadrant(getX(), getY(), midX, midY)) {
+            System.out.println("STAGE: MOVING TO QUADRANT " + currentQuadrant + " - Agent " + getName());
             return moveToQuadrantCenter(currentQuadrant);
         }
 
         // Find target only if we're in position
         TWEntity bestTarget = findBestTargetInQuadrant();
         if (bestTarget != null) {
+            System.out.println("STAGE: PURSUING TARGET - Agent " + getName() + " at (" + bestTarget.getX() + "," + bestTarget.getY() + ")");
             return moveTowardsLocation(bestTarget.getX(), bestTarget.getY());
         }
 
         // Simplified density check
-        if (getCurrentQuadrantDensity() < 0.05) { // Stay longer in promising areas
+        if (getCurrentQuadrantDensity() < 0.05) {
+            System.out.println("STAGE: CHANGING QUADRANT - Agent " + getName() + " density too low");
             return moveToQuadrantCenter((currentQuadrant + 1) % QUADRANTS);
         }
 
+        System.out.println("STAGE: LOCAL SEARCH - Agent " + getName() + " in Q" + currentQuadrant);
         return getLocalSearchMovement();
     }
 
@@ -239,6 +267,15 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     }
 
     private TWThought moveTowardsLocation(int targetX, int targetY) {
+        if (currentPath == null || !currentPath.hasNext()) {
+            currentPath = pathGenerator.findPath(getX(), getY(), targetX, targetY);
+        }
+        if (currentPath != null && currentPath.hasNext()) {
+            TWPathStep nextStep = currentPath.popNext();  // Changed from getNextMove()
+            return new TWThought(TWAction.MOVE, nextStep.getDirection());  // Get direction from TWPathStep
+        }
+
+        // Fallback to simple movement
         int dx = targetX - getX();
         int dy = targetY - getY();
         
@@ -271,7 +308,25 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
         return new TWThought(TWAction.MOVE, TWDirection.Z);
     }
 
+    private double getDistance(int x1, int y1, int x2, int y2) {
+        return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+    }
+
+    private void updateMetrics(int newX, int newY) {
+        totalDistance += Math.abs(newX - getX()) + Math.abs(newY - getY());
+        if (getMemory().getMemoryGrid().get(newX, newY) instanceof TWHole) {
+            holesFound++;
+        }
+    }
+
+    public double getEfficiencyScore() {
+        return (holesFound * 10.0 + tilesCollected * 5.0) / 
+               (totalDistance > 0 ? totalDistance : 1);
+    }
+
     private void broadcastStatus() {
+        System.out.println("STAGE: BROADCAST STATUS - Agent " + getName() + 
+            " Q" + currentQuadrant + " Fuel:" + String.format("%.2f", getFuelLevel()));
         String status = String.format("%sSTATUS:%s:%d,%d:%d:%f",
             BROADCAST_PREFIX,
             getName(),
@@ -284,6 +339,8 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     }
 
     private void broadcastNewDiscoveries() {
+        System.out.println("STAGE: SCANNING AREA - Agent " + getName() + 
+            " at (" + getX() + "," + getY() + ")");
         ObjectGrid2D memoryGrid = getMemory().getMemoryGrid();
         int range = Parameters.defaultSensorRange;
         long currentTime = getEnvironment().schedule.getSteps();
@@ -472,6 +529,7 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     }
 
     private void updateQuadrantDensities() {
+        System.out.println("STAGE: DENSITY UPDATE - Agent " + getName());
         ObjectGrid2D memoryGrid = getMemory().getMemoryGrid();
         int midX = getEnvironment().getxDimension() / 2;
         int midY = getEnvironment().getyDimension() / 2;
@@ -563,9 +621,30 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
                 tracker.addObservation(Math.random() < receivedDensity);
             }
             
-            // Debug output to verify density relay
-            System.out.println(String.format("Agent %s received density %.2f for quadrant %d", 
-                getName(), receivedDensity, quadrant));
+            System.out.println("STAGE: DENSITY INFO - Agent " + getName() + 
+                " Q" + quadrant + " Density:" + String.format("%.2f", receivedDensity));
         }
+    }
+
+    private TWFuelStation getNearestFuelStation() {
+        TWFuelStation nearest = null;
+        double minDistance = Double.MAX_VALUE;
+        ObjectGrid2D grid = getEnvironment().getObjectGrid();
+        
+        // Scan environment for fuel station
+        for (int x = 0; x < getEnvironment().getxDimension(); x++) {
+            for (int y = 0; y < getEnvironment().getyDimension(); y++) {
+                Object obj = grid.get(x, y);
+                if (obj instanceof TWFuelStation) {
+                    double distance = getDistance(getX(), getY(), x, y);
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        nearest = (TWFuelStation) obj;
+                    }
+                }
+            }
+        }
+        
+        return nearest;
     }
 }
