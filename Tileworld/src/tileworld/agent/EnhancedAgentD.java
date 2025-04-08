@@ -6,11 +6,10 @@ import tileworld.planners.AstarPathGenerator;
 import tileworld.planners.TWPath;
 import tileworld.planners.TWPathStep;
 import sim.field.grid.ObjectGrid2D;
-import tileworld.messages.ExtendedMessage;  // Add this import
-import tileworld.messages.MessageType;      // Add this import
+import tileworld.agent.ExtendedMessage;  // Add this import
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArraySet; // For thread safety
+import java.util.concurrent.CopyOnWriteArraySet; 
 import java.util.stream.Collectors;
 
 public class EnhancedAgentD extends AgentD implements MessageReceiver {
@@ -167,123 +166,107 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
     }
 
     private TWThought getOptimizedMovement() {
+        // Critical fuel handling remains the same
         if (getFuelLevel() < Parameters.defaultFuelLevel * FUEL_CRITICAL) {
             System.out.println("STAGE: CRITICAL FUEL - Agent " + getName());
             return super.think();
         }
 
-        if (getFuelLevel() < Parameters.defaultFuelLevel * FUEL_LOW) {
-            System.out.println("STAGE: LOW FUEL CHECK - Agent " + getName());
-            TWFuelStation station = getNearestFuelStation();
-            if (station != null) {
-                double distanceToFuel = getDistance(getX(), getY(), station.getX(), station.getY());
-                if (distanceToFuel * 1.5 > getFuelLevel()) {
-                    return moveTowardsLocation(station.getX(), station.getY());
-                }
+        // Check for tiles first if carrying a hole
+        if (hasTile()) { // Changed from getCarrying() instanceof TWHole
+            TWTile nearestTile = findNearestTile();
+            if (nearestTile != null) {
+                System.out.println("STAGE: SEEKING TILE - Agent " + getName());
+                return moveTowardsLocation(nearestTile.getX(), nearestTile.getY());
             }
         }
 
-        // Cache environment dimensions
-        int midX = getEnvironment().getxDimension() >> 1; // Faster division by 2
-        int midY = getEnvironment().getyDimension() >> 1;
-
-        // Quick quadrant check
-        if (!isInQuadrant(getX(), getY(), midX, midY)) {
-            System.out.println("STAGE: MOVING TO QUADRANT " + currentQuadrant + " - Agent " + getName());
-            return moveToQuadrantCenter(currentQuadrant);
+        // Otherwise, prioritize holes
+        TWHole nearestHole = findNearestHole();
+        if (nearestHole != null) {
+            System.out.println("STAGE: PURSUING HOLE - Agent " + getName());
+            return moveTowardsLocation(nearestHole.getX(), nearestHole.getY());
         }
 
-        // Find target only if we're in position
-        TWEntity bestTarget = findBestTargetInQuadrant();
-        if (bestTarget != null) {
-            System.out.println("STAGE: PURSUING TARGET - Agent " + getName() + " at (" + bestTarget.getX() + "," + bestTarget.getY() + ")");
-            return moveTowardsLocation(bestTarget.getX(), bestTarget.getY());
-        }
-
-        // Simplified density check
-        if (getCurrentQuadrantDensity() < 0.05) {
-            System.out.println("STAGE: CHANGING QUADRANT - Agent " + getName() + " density too low");
-            return moveToQuadrantCenter((currentQuadrant + 1) % QUADRANTS);
-        }
-
-        System.out.println("STAGE: LOCAL SEARCH - Agent " + getName() + " in Q" + currentQuadrant);
-        return getLocalSearchMovement();
+        // If no immediate tasks, do quick local exploration
+        return getExplorationMovement();
     }
 
-    private TWEntity findBestTargetInQuadrant() {
-        TWEntity bestTarget = null;
-        double bestScore = Double.NEGATIVE_INFINITY;
-
-        // First check assigned holes
-        for (TWHole hole : assignedHoles) {
-            if (hole.getTimeLeft(getEnvironment().schedule.getTime()) > 0) {
-                double score = calculateTaskScore(hole);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestTarget = hole;
-                }
-            }
-        }
-
-        // If no assigned holes, look for high-priority tasks
-        if (bestTarget == null) {
-            TaskManager.TaskPriority priority = taskManager.getHighestPriorityTask();
-            if (priority != null) {
-                bestTarget = priority.getEntity();
-            }
-        }
-
-        return bestTarget;
-    }
-
-    private double calculateTaskScore(TWEntity entity) {
-        double priority = taskManager.calculatePriority(entity); // Now accessible
-        double distance = getDistance(getX(), getY(), entity.getX(), entity.getY());
-        return priority / (distance + 1);
-    }
-
-    private TWThought moveToQuadrantCenter(int quadrant) {
-        int midX = getEnvironment().getxDimension() / 2;
-        int midY = getEnvironment().getyDimension() / 2;
+    private TWTile findNearestTile() {
+        TWTile nearest = null;
+        double minDistance = Double.MAX_VALUE;
+        int range = Parameters.defaultSensorRange * 2;
         
-        // Calculate quadrant center
-        int targetX = (quadrant % 2 == 0) ? midX / 2 : midX + midX / 2;
-        int targetY = (quadrant < 2) ? midY / 2 : midY + midY / 2;
-        
-        return moveTowardsLocation(targetX, targetY);
-    }
-
-    private TWThought getLocalSearchMovement() {
-        int range = Parameters.defaultSensorRange;
-        int bestX = getX(), bestY = getY();
-        double bestScore = -1;
-
-        // Search nearby cells for holes
         for (int dx = -range; dx <= range; dx++) {
             for (int dy = -range; dy <= range; dy++) {
                 int newX = getX() + dx;
                 int newY = getY() + dy;
-                if (isInBounds(newX, newY)) {
-                    double score = evaluateLocation(newX, newY);
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestX = newX;
-                        bestY = newY;
+                if (!isInBounds(newX, newY)) continue;
+                
+                Object obj = getMemory().getMemoryGrid().get(newX, newY);
+                if (obj instanceof TWTile) {
+                    double distance = getDistance(getX(), getY(), newX, newY);
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        nearest = (TWTile) obj;
                     }
                 }
             }
         }
-
-        return moveTowardsLocation(bestX, bestY);
+        return nearest;
     }
 
-    private double evaluateLocation(int x, int y) {
-        Object obj = getMemory().getMemoryGrid().get(x, y);
-        if (obj instanceof TWHole) {
-            TWHole hole = (TWHole) obj;
-            return hole.getTimeLeft(getEnvironment().schedule.getTime());
+    private TWHole findNearestHole() {
+        TWHole nearest = null;
+        double minDistance = Double.MAX_VALUE;
+        int range = Parameters.defaultSensorRange * 2;
+        
+        for (int dx = -range; dx <= range; dx++) {
+            for (int dy = -range; dy <= range; dy++) {
+                int newX = getX() + dx;
+                int newY = getY() + dy;
+                if (!isInBounds(newX, newY)) continue;
+                
+                Object obj = getMemory().getMemoryGrid().get(newX, newY);
+                if (obj instanceof TWHole) {
+                    TWHole hole = (TWHole) obj;
+                    if (hole.getTimeLeft(getEnvironment().schedule.getTime()) > 0) {
+                        double distance = getDistance(getX(), getY(), newX, newY);
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            nearest = hole;
+                        }
+                    }
+                }
+            }
         }
-        return 0;
+        return nearest;
+    }
+
+    private TWThought getExplorationMovement() {
+        // Spiral pattern exploration
+        int step = Parameters.defaultSensorRange;
+        int dx = step * (int)Math.cos(getEnvironment().schedule.getSteps() % 8 * Math.PI / 4);
+        int dy = step * (int)Math.sin(getEnvironment().schedule.getSteps() % 8 * Math.PI / 4);
+        
+        int targetX = getX() + dx;
+        int targetY = getY() + dy;
+        
+        if (isInBounds(targetX, targetY)) {
+            System.out.println("STAGE: SPIRAL EXPLORATION - Agent " + getName());
+            return moveTowardsLocation(targetX, targetY);
+        }
+        
+        // Fallback to random movement within bounds
+        targetX = getX() + (int)(Math.random() * step * 2 - step);
+        targetY = getY() + (int)(Math.random() * step * 2 - step);
+        
+        if (isInBounds(targetX, targetY)) {
+            System.out.println("STAGE: RANDOM EXPLORATION - Agent " + getName());
+            return moveTowardsLocation(targetX, targetY);
+        }
+        
+        return new TWThought(TWAction.MOVE, TWDirection.Z);
     }
 
     private TWThought moveTowardsLocation(int targetX, int targetY) {
@@ -700,5 +683,12 @@ public class EnhancedAgentD extends AgentD implements MessageReceiver {
         }
         
         return nearest;
+    }
+
+    private TWEntity getCarrying() {
+        if (this.carriedTiles != null && !this.carriedTiles.isEmpty()) {
+            return this.carriedTiles.get(0);
+        }
+        return null;
     }
 }
