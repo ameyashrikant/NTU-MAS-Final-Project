@@ -1,7 +1,7 @@
 package tileworld.agent;
 import tileworld.environment.TWDirection;
 import tileworld.environment.TWFuelStation;
-import tileworld.Parameters;
+import tileworld.EnvParameters;
 import tileworld.environment.TWTile;
 import tileworld.environment.TWHole;
 import tileworld.planners.AstarPathGenerator;
@@ -39,7 +39,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         this.name = name;
         this.currentDir = initialDir;
         this.memory = new SmartMemory(this, env.schedule, env.getxDimension(), env.getyDimension());
-        this.pathGenerator = new AstarPathGenerator(env, this, Parameters.xDimension*Parameters.yDimension);
+        this.pathGenerator = new AstarPathGenerator(env, this, env.getxDimension()*env.getyDimension());
         setMinFuelLevel();
     }
     public String getName() {
@@ -600,9 +600,9 @@ public abstract class SpiralSearchingAgent extends TWAgent {
      */
     protected void setMinFuelLevel() {
         // Calculate the direct distance to the fueling station
-    	int x = Parameters.xDimension;
-    	int y = Parameters.yDimension;
-    	double obstacleMean = Parameters.obstacleMean;
+    	int x = this.getEnvironment().getxDimension();
+    	int y = this.getEnvironment().getyDimension();
+    	double obstacleMean = EnvParameters.obstacleMean;
         double maxDiagonalDistance = x + y;
         
         // Calculate the expected number of obstacles encountered along the path

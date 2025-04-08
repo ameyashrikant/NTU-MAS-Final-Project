@@ -8,7 +8,7 @@ import sim.engine.Steppable;
 import sim.portrayal.Inspector;
 import sim.portrayal.LocationWrapper;
 import sim.portrayal.Portrayal;
-import tileworld.Parameters;
+import tileworld.EnvParameters;
 import tileworld.environment.TWDirection;
 import tileworld.environment.TWEntity;
 import tileworld.environment.TWEnvironment;
@@ -45,7 +45,7 @@ public abstract class TWAgent extends TWEntity implements Steppable {
         this.score = 0;
         this.fuelLevel = fuelLevel;
         this.carriedTiles = new ArrayList<TWTile>();
-        this.sensor = new TWAgentSensor(this, Parameters.defaultSensorRange);
+        this.sensor = new TWAgentSensor(this, EnvParameters.defaultSensorRange);
         this.memory = new TWAgentWorkingMemory(this, env.schedule, env.getxDimension(), env.getyDimension());
     }
     /**
@@ -163,7 +163,7 @@ public abstract class TWAgent extends TWEntity implements Steppable {
     protected final void refuel() {
         //assert (this.sameLocation(this.getEnvironment().getFuelingStation()));   	
     	if(this.getEnvironment().inFuelStation(this)) {
-    		this.fuelLevel = Parameters.defaultFuelLevel;
+    		this.fuelLevel = EnvParameters.defaultFuelLevel;
     		System.out.println("Refuel.....");
     	}else {
     		System.out.println("Agent is not in the same position of fuel station.");
@@ -217,7 +217,7 @@ public abstract class TWAgent extends TWEntity implements Steppable {
      */
     public static Portrayal getPortrayal() {
         //red filled box.
-        return new TWAgentPortrayal(Color.blue, Parameters.defaultSensorRange) {
+        return new TWAgentPortrayal(Color.blue, EnvParameters.defaultSensorRange) {
 
             @Override
             public Inspector getInspector(LocationWrapper wrapper, GUIState state) {
@@ -263,51 +263,4 @@ public abstract class TWAgent extends TWEntity implements Steppable {
      * 
      */
     public abstract String getName();
-    protected static boolean globalFuelStationFound = false;
-
-    public static boolean isFuelStationFound() {
-        return globalFuelStationFound;
-    }
-
-    public static void setFuelStationFound() {
-        globalFuelStationFound = true;
-    }
-
-    /**
-     * Scans agent memory for a fuel station within sensing range (7x7).
-    * Returns the TWFuelStation if found, else null.
-    */
-    public TWFuelStation detectFuelStationInRangeFromMemory() {
-        for (int dx = -3; dx <= 3; dx++) {
-            for (int dy = -3; dy <= 3; dy++) {
-                int x = this.getX() + dx;
-                int y = this.getY() + dy;
-
-                    if (!getEnvironment().isInBounds(x, y)) continue;
-
-                Object obj = this.memory.getMemoryGrid().get(x, y);
-                if (obj instanceof TWFuelStation) {
-                    return (TWFuelStation) obj;
-                }
-                }
-        }
-        return null;
-    } 
-    protected static int fuelX = -1;
-    protected static int fuelY = -1;
-
-    public static void setFuelLocation(int x, int y) {
-        fuelX = x;
-        fuelY = y;
-    }
-
-    public static boolean isFuelLocationKnown() {
-        return fuelX >= 0 && fuelY >= 0;
-    }
-
-    public static int getFuelX() { return fuelX; }
-    public static int getFuelY() { return fuelY; }
- 
-
-
 }

@@ -11,7 +11,7 @@ import sim.util.Int2D;
 import sim.field.grid.ObjectGrid2D;
 import sim.util.IntBag;
 import tileworld.environment.NeighbourSpiral;
-import tileworld.Parameters;
+import tileworld.EnvParameters;
 import tileworld.environment.TWEntity;
 
 
@@ -69,7 +69,7 @@ public class TWAgentWorkingMemory {
 	 * null if no objects are in sensor range
 	 */
 	private HashMap<Class<?>, TWEntity> closestInSensorRange;
-	static private List<Int2D> spiral = new NeighbourSpiral(Parameters.defaultSensorRange * 4).spiral();
+	static private List<Int2D> spiral = new NeighbourSpiral(EnvParameters.defaultSensorRange * 4).spiral();
 	//    private List<TWAgent> neighbouringAgents = new ArrayList<TWAgent>();
 
 	// x, y: the dimension of the grid
