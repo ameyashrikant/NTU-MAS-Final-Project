@@ -4,6 +4,7 @@
 package tileworld.environment;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 import sim.engine.SimState;
@@ -61,9 +62,25 @@ public class TWEnvironment extends SimState implements Steppable {
     
     private int reward;
 
-//    private TWFuelStation getFuelingStation() {
-//        return fuelingStation;
-//    }
+    private TaskManager taskManager;
+
+    public TaskManager getTaskManager() {
+        if (taskManager == null) {
+            taskManager = new TaskManager(this);
+        }
+        return taskManager;
+    }
+
+    public List<Message> getMessages() {
+        return messages != null ? messages : new ArrayList<>();
+    }
+
+    public void receiveMessage(Message message) {
+        if (messages == null) {
+            messages = new ArrayList<>();
+        }
+        messages.add(message);
+    }
     
     public boolean inFuelStation(TWAgent agent) {
     	return ((agent.x==fuelingStation.x)&&(agent.y==fuelingStation.y));
@@ -90,6 +107,7 @@ public class TWEnvironment extends SimState implements Steppable {
         obstacles = new Bag();
         reward = 0;
         messages = new ArrayList<Message>();
+        this.taskManager = new TaskManager(this);
     }
     
     @Override
@@ -114,7 +132,7 @@ public class TWEnvironment extends SimState implements Steppable {
         pos = this.generateRandomLocation();
         createAgent(new AgentC("agent3", pos.getX(), pos.getY(), this, EnvParameters.defaultFuelLevel));
         pos = this.generateRandomLocation();
-        createAgent(new AgentD("agent4", pos.getX(), pos.getY(), this, EnvParameters.defaultFuelLevel));
+        createAgent(new AgentD("manager", pos.getX(), pos.getY(), this, EnvParameters.defaultFuelLevel));
         
 //        
         //create the fueling station
@@ -172,14 +190,6 @@ public class TWEnvironment extends SimState implements Steppable {
         // remove old objects (dead ones)
         removeTWObjects(time);
         messages.clear(); // clear the messages in every time step
-    }
-    
-    public ArrayList<Message> getMessages(){
-    	return messages;
-    }
-    
-    public void receiveMessage(Message m){
-        messages.add(m);
     }
     
     /**
