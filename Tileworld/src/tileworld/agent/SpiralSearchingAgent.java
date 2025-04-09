@@ -7,6 +7,7 @@ import tileworld.environment.TWHole;
 import tileworld.planners.AstarPathGenerator;
 import tileworld.planners.TWPath;
 import tileworld.planners.TWPathStep;
+import tileworld.environment.TWObject;
 
 import java.util.Objects;
 import java.util.Set;
@@ -33,6 +34,8 @@ public abstract class SpiralSearchingAgent extends TWAgent {
     private TWPath currentPath = null;
     private int currentPathTargetX = -1;
     private int currentPathTargetY = -1;
+    private int pickingUpTime;
+    private int fillingTime;
     
     public SpiralSearchingAgent(String name, int xpos, int ypos, tileworld.environment.TWEnvironment env, double fuelLevel, TWDirection initialDir) {
         super(xpos, ypos, env, fuelLevel);
@@ -46,6 +49,50 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         return name;
     }
     
+    // PICKUP:time,x,y
+    // FILL:time,x,y
+    private void processMessages() {
+    	for (Message m: getEnvironment().getMessages()) {
+    		String message = m.getMessage();
+    		if (m.getFrom().equals(name) || isHeadingToFuelStation) {
+    			continue;
+    		}
+    		if (message.startsWith("PICKUP:")) {
+    			String[] coords = message.substring(7).split(",");
+    			int time = Integer.parseInt(coords[0]);
+    			int x = Integer.parseInt(coords[1]);
+    			int y = Integer.parseInt(coords[2]);
+    			if (tileToBePickedUp!=null && tileToBePickedUp.getX()==x && tileToBePickedUp.getY()==y && time < pickingUpTime) {
+    				this.memory.removeObject(tileToBePickedUp);
+    				tileToBePickedUp = null;
+    				isPickingUpTile = false; // Reset state
+                    currentPath = null; // Clear any path associated with this failed goal
+                    currentPathTargetX = -1;
+                    currentPathTargetY = -1;
+                    System.out.println(name + "gives way to " + m.getFrom());
+    			}
+    		}
+    		else if (message.startsWith("FILL:")) {
+    			String[] coords = message.substring(5).split(",");
+    			int time = Integer.parseInt(coords[0]);
+    			int x = Integer.parseInt(coords[1]);
+    			int y = Integer.parseInt(coords[2]);
+    			
+    			if (holeToBeFilled!=null && holeToBeFilled.getX()==x && holeToBeFilled.getY()==y && time < fillingTime) {
+    				this.memory.removeObject(holeToBeFilled);
+    				holeToBeFilled = null;
+    				currentPath = null; // Clear any path associated with this failed goal
+                    currentPathTargetX = -1;
+                    currentPathTargetY = -1;
+                    System.out.println(name + "gives way to " + m.getFrom());
+    			}
+    		}
+    	}
+    }
+    
+    private void sendMessage(String message) {
+    	this.getEnvironment().receiveMessage(new Message(name, "ALL", message));
+    }
     
     @Override
     protected TWThought think() {
@@ -56,30 +103,31 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                         String[] coords = m.getMessage().substring(5).split(",");
                         fuelStationX = Integer.parseInt(coords[0]);
                         fuelStationY = Integer.parseInt(coords[1]);
-                        ((SmartMemory) this.memory).setFuelStationLocation(new TWFuelStation(fuelStationX, fuelStationY, getEnvironment()));;
-//                        System.out.println(name + " received fuel station coordinates: " + fuelStationX + "," + fuelStationY);
+                        ((SmartMemory) this.memory).setFuelStationLocation(new TWFuelStation(fuelStationX, fuelStationY, getEnvironment()));
                         return new TWThought(TWAction.MOVE, TWDirection.Z);
                     } catch (Exception e) {
-                        continue; // Try next message if this one fails
+                        continue; 
                     }
                 }
             }
             return findFuelStation();
         }
         broadcastFuelStationLocation();
-        // --- Goal Prioritization ---
-
-        // 1. Refueling Goal
-        if (getFuelLevel() < MIN_FUEL_LEVEL || isHeadingToFuelStation) { // isHeadingToFuelStation might be replaced by checking currentPath target
+        processMessages();
+        
+        if (getFuelLevel() < MIN_FUEL_LEVEL || isHeadingToFuelStation) { 
              System.out.println("STAGE: REFUELLING");
-             isHeadingToFuelStation = true; // Keep this to remember the high-level goal
+             isHeadingToFuelStation = true;
+             tileToBePickedUp = null;
+             holeToBeFilled = null;
+             isPickingUpTile = false;
+             fillHole = false;
 
              if (getEnvironment().inFuelStation(this)) {
-                 currentPath = null; // Reached destination
-                 isHeadingToFuelStation = false; // Goal achieved (will refuel in act)
+                 currentPath = null; 
+                 isHeadingToFuelStation = false; 
                  return new TWThought(TWAction.REFUEL, TWDirection.Z);
              }
-
              if (currentPath == null || currentPathTargetX != fuelStationX || currentPathTargetY != fuelStationY) {
                  System.out.println(name + " calculating path to Fuel Station: " + fuelStationX + "," + fuelStationY);
                  currentPath = pathGenerator.findPath(getX(), getY(), fuelStationX, fuelStationY);
@@ -87,17 +135,15 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                  currentPathTargetY = fuelStationY;
                  if (currentPath == null) {
                      System.out.println(name + " CANNOT FIND PATH to Fuel Station!");
-                     isHeadingToFuelStation = false; // Cannot reach
-                     return fallbackMovement(); // Fallback behavior
+                     isHeadingToFuelStation = false; 
+                     return fallbackMovement(); 
                  }
              }
-             // If we have a path, follow it
              return followCurrentPath();
         }
 
-        // 2. Pickup Tile Goal (if not carrying max tiles and not currently filling holes)
         if (carriedTiles.size() < 3 && !fillHole) {
-             System.out.println("STAGE: SEEKING/PICKING UP TILES");
+//             System.out.println("STAGE: SEEKING/PICKING UP TILES");
              if (isPickingUpTile && tileToBePickedUp != null) {
                   if (this.sameLocation(tileToBePickedUp)) {
                        currentPath = null; 
@@ -117,34 +163,33 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                             return fallbackMovement(); // Fallback
                        }
                   }
+                  String message = "PICKUP:"+ pickingUpTime + "," + tileToBePickedUp.getX() + "," + tileToBePickedUp.getY();
+                  sendMessage(message);
                   return followCurrentPath();
              } else {
-                 // Find a new tile if not already targeting one
                  tileToBePickedUp = this.memory.getNearbyTile(getX(), getY(), 20);
                  if (tileToBePickedUp != null) {
                      isPickingUpTile = true;
-                     // Path calculation will happen in the next cycle via the logic above
-                     return new TWThought(TWAction.MOVE, TWDirection.Z); // Do nothing this cycle, wait for path calc next time
+                     pickingUpTime = (int) this.getEnvironment().schedule.getTime();
+                     String message = "PICKUP:"+ pickingUpTime + "," + tileToBePickedUp.getX() + "," + tileToBePickedUp.getY();
+                     sendMessage(message);
+                     return new TWThought(TWAction.MOVE, TWDirection.Z); 
                  } else {
-                     isPickingUpTile = false; // Ensure flag is off if no tile found
-                     return fallbackMovement(); // Explore if no nearby tile
+                     isPickingUpTile = false;
+                     return fallbackMovement(); 
                  }
              }
         }
 
-        // 3. Fill Hole Goal (if carrying tiles)
-        if (carriedTiles.size() > 0 || fillHole) { // Should probably be fillHole && carriedTiles > 0
-            System.out.println("STAGE: SEEKING/FILLING HOLES");
+        if (carriedTiles.size() > 0 || fillHole) { 
+//            System.out.println("STAGE: SEEKING/FILLING HOLES");
              fillHole = true; // Remember the high-level goal
 
-             // Are we already moving to a hole?
              if (holeToBeFilled != null) {
                   if (this.sameLocation(holeToBeFilled)) {
-                       currentPath = null; // Reached destination
-                       // fillHole might be reset in act after successful putdown if out of tiles
+                       currentPath = null; 
                        return new TWThought(TWAction.PUTDOWN, TWDirection.Z);
                   }
-                 // Continue path or calculate anew if needed
                  if (currentPath == null || currentPathTargetX != holeToBeFilled.getX() || currentPathTargetY != holeToBeFilled.getY()) {
                      System.out.println(name + " calculating path to Hole: " + holeToBeFilled.getX() + "," + holeToBeFilled.getY());
                      currentPath = pathGenerator.findPath(getX(), getY(), holeToBeFilled.getX(), holeToBeFilled.getY());
@@ -152,28 +197,29 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                      currentPathTargetY = holeToBeFilled.getY();
                      if (currentPath == null) {
                           System.out.println(name + " CANNOT FIND PATH to Hole!");
-                          this.memory.removeObject(holeToBeFilled); // Forget unreachable hole
+                          this.memory.removeObject(holeToBeFilled); 
                           holeToBeFilled = null;
-                          // Should we stop filling holes? Maybe look for another?
-                          return fallbackMovement(); // Fallback
+                          return fallbackMovement();
                      }
                  }
+                 String message = "FILL:"+ fillingTime + "," + holeToBeFilled.getX() + "," + holeToBeFilled.getY();
+                 sendMessage(message);
                  return followCurrentPath();
             } else {
-                 // Find a new hole if not already targeting one
                  holeToBeFilled = this.memory.getNearbyHole(getX(), getY(), 20);
                  if (holeToBeFilled != null) {
-                     // Path calculation will happen in the next cycle
-                     return new TWThought(TWAction.MOVE, TWDirection.Z); // Wait for path calc
+                	 fillingTime = (int) this.getEnvironment().schedule.getTime();
+                     String message = "FILL:"+ fillingTime + "," + holeToBeFilled.getX() + "," + holeToBeFilled.getY();
+                     sendMessage(message);
+                	 return new TWThought(TWAction.MOVE, TWDirection.Z); // Wait for path calc
                  } else {
-                     // No nearby hole found, maybe explore?
                      fillHole = false; // Stop trying to fill if none are found nearby? Decision needed.
                      return fallbackMovement();
                  }
              }
         }
 
-        // --- Default Action: Explore ---
+        
         System.out.println("STAGE: EXPLORING (SPIRAL)");
         currentPath = null; // Ensure no path is active if we default to spiral
         return fallbackMovement();
@@ -211,6 +257,33 @@ public abstract class SpiralSearchingAgent extends TWAgent {
     }
     
     
+    private boolean isValidMove(TWDirection dir) {
+        int nextX = getX();
+        int nextY = getY();
+
+        // Determine the next position based on the current direction
+        switch (dir) {
+            case N:
+                nextY--;
+                break;
+            case S:
+                nextY++;
+                break;
+            case W:
+                nextX--;
+                break;
+            case E:
+                nextX++;
+                break;
+            default:
+                return false;
+        }
+
+        // Use the isCellBlocked method to check if the next position is valid
+        return !getEnvironment().isCellBlocked(nextX, nextY); // Return false if the cell is blocked
+    }
+    
+    
     protected TWThought fallbackMovement() {
     	TWDirection dir = currentDir;
         movesInCurrentLength++;
@@ -222,6 +295,12 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                 moveLength++;
             }
         }
+        if (!isValidMove(dir)) {
+            // Try the next direction if the current direction is invalid
+            currentDir = currentDir.next();
+            dir = currentDir; // Update direction
+        }
+
         return new TWThought(TWAction.MOVE, dir);
     }
     
@@ -331,24 +410,14 @@ public abstract class SpiralSearchingAgent extends TWAgent {
             	currentPathTargetX = -1;
             	currentPathTargetY = -1;
             }
+            
             return;
         }
         // If action is none of the above (shouldn't happen with current TWAction types)
         System.err.println(name + " Received unknown action type in act(): " + action);
     }
     
-    /**
-     * Calculates the minimum fuel level required for an agent to reach the fueling station.
-     * This considers both the direct travel distance and the additional steps required 
-     * due to obstacles encountered along the way.
-     * 
-     * @param x The x-coordinate of the fueling station.
-     * @param y The y-coordinate of the fueling station.
-     * @param mean The average object creation time (mean) that determines how obstacles 
-     *             are distributed in the environment.
-     * @param gridSize The total grid size (environment size) represented as x * y.
-     * @return The minimum fuel level required to reach the fueling station, factoring in obstacles.
-     */
+    
     protected void setMinFuelLevel() {
         // Calculate the direct distance to the fueling station
     	int x = this.getEnvironment().getxDimension();
