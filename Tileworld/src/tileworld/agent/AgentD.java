@@ -8,22 +8,15 @@ import tileworld.environment.TWFuelStation;
 import tileworld.planners.TWPath;
 import tileworld.agent.TWAction;
 import tileworld.agent.TWThought;
-import sim.field.grid.ObjectGrid2D;
 import sim.util.Bag;
-
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 public class AgentD extends SpiralSearchingAgent {
     private Map<String, AgentStatus> teamStatus = new HashMap<>();
-    private TaskManager taskManager; // Add TaskManager reference
-
-    public AgentD(String name, int xpos, int ypos, tileworld.environment.TWEnvironment env, double fuelLevel) {
-        super(name, xpos, ypos, env, fuelLevel, TWDirection.W);
-        this.taskManager = env.getTaskManager(); 
-    }
+    private TaskManager taskManager;
 
     private static class AgentStatus {
         final int x, y;
@@ -40,14 +33,19 @@ public class AgentD extends SpiralSearchingAgent {
         }
     }
 
+    public AgentD(String name, int xpos, int ypos, tileworld.environment.TWEnvironment env, double fuelLevel) {
+        super(name, xpos, ypos, env, fuelLevel, TWDirection.W);
+        this.taskManager = env.getTaskManager();
+    }
+
     @Override
     protected TWThought think() {
         long currentTime = getEnvironment().schedule.getSteps();
 
-        // Process messages first to catch completions before they're cleared
+        // Process messages first to update team status and handle completions
         processMessages();
 
-        // Register new tasks
+        // Register new tasks from memory
         for (TWEntity e : ((SmartMemory) memory).getObjects()) {
             if (e instanceof TWTile && !taskManager.getAssignedTiles().containsKey(e) && 
                 !taskManager.availableTiles.contains(e)) {
@@ -60,61 +58,22 @@ public class AgentD extends SpiralSearchingAgent {
             }
         }
 
+        // Assign tasks to other agents (and itself) every 5 steps
         if (currentTime % 5 == 0) {
             assignTasksBasedOnStatus();
         }
+
+        // Optimize task allocation every 20 steps
         if (currentTime % 20 == 0) {
             taskManager.optimizeTaskAllocation();
             System.out.println(name + " optimized task allocation");
         }
 
-        return new TWThought(TWAction.MOVE, TWDirection.Z);
+        // Manager acts as a worker: reuse SpiralSearchingAgent logic for its own tasks
+        TWThought workerThought = super.think();
+        return workerThought; // Execute its own task (pickup, putdown, refuel, or move)
     }
 
-    @Override
-    protected void processMessages() {
-        super.processMessages();
-
-        System.out.println(name + " processing " + getEnvironment().getMessages().size() + " messages");
-        for (Message m : getEnvironment().getMessages()) {
-            if (m instanceof ExtendedMessage) {
-                ExtendedMessage em = (ExtendedMessage) m;
-                System.out.println(name + " received message: " + em.getMessage() + " from " + em.getFrom() + " to " + em.getTo());
-                if (em.getTo().equals(this.name)) {
-                    if (em.getType() == MessageType.POSITION_REPORT) {
-                        // Existing logic unchanged...
-                    } else if (em.getType() == MessageType.TASK_COMPLETE) {
-                        String[] parts = em.getMessage().split(":");
-                        if (parts.length == 3) {
-                            String taskType = parts[1];
-                            String[] coords = parts[2].split(",");
-                            int x = Integer.parseInt(coords[0]);
-                            int y = Integer.parseInt(coords[1]);
-                            TWEntity entity = (TWEntity) getEnvironment().getObjectGrid().get(x, y);
-                            String fromAgent = em.getFrom();
-                            if (entity != null) {
-                                taskManager.completeTask(fromAgent, entity);
-                                ((SmartMemory) memory).removeObject(entity);
-                                System.out.println(name + " recorded task completion by " + fromAgent + 
-                                                   ": " + taskType + " at (" + x + "," + y + ")");
-                            } else {
-                                System.out.println(name + " task at (" + x + "," + y + ") no longer exists");
-                                if (taskType.equals("TILE")) {
-                                    TWTile dummyTile = new TWTile(x, y, getEnvironment(), 0.0, 0.0);
-                                    taskManager.completeTask(fromAgent, dummyTile);
-                                    ((SmartMemory) memory).removeObject(dummyTile);
-                                } else if (taskType.equals("HOLE")) {
-                                    TWHole dummyHole = new TWHole(x, y, getEnvironment(), 0.0, 0.0);
-                                    taskManager.completeTask(fromAgent, dummyHole);
-                                    ((SmartMemory) memory).removeObject(dummyHole);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
     private void assignTasksBasedOnStatus() {
         System.out.println(name + " assigning tasks based on status");
         List<SpiralSearchingAgent> availableAgents = taskManager.getAvailableAgents();
@@ -124,12 +83,17 @@ public class AgentD extends SpiralSearchingAgent {
         List<TWEntity> sortedTasks = new ArrayList<>(availableTasks);
         sortedTasks.sort((t1, t2) -> Double.compare(taskManager.calculatePriority(t2), taskManager.calculatePriority(t1)));
 
-        for (Map.Entry<String, AgentStatus> entry : teamStatus.entrySet()) {
-            String agentName = entry.getKey();
-            AgentStatus status = entry.getValue();
-            SpiralSearchingAgent agent = getAgentByName(agentName);
-            if (agent == null) {
-                System.out.println(name + " no agent found for " + agentName);
+        // Include manager itself in the agent list
+        List<SpiralSearchingAgent> allAgents = new ArrayList<>(availableAgents);
+        allAgents.add(this); // Add AgentD to participate
+
+        for (SpiralSearchingAgent agent : allAgents) {
+            String agentName = agent.getName();
+            AgentStatus status = agentName.equals(this.name) ? 
+                new AgentStatus(getX(), getY(), getFuelLevel(), carriedTiles.size()) : 
+                teamStatus.get(agentName);
+            if (status == null) {
+                System.out.println(name + " no status for " + agentName);
                 continue;
             }
 
@@ -140,14 +104,18 @@ public class AgentD extends SpiralSearchingAgent {
                 continue;
             }
 
-            // Assign highest-priority task based on agent's capability
+            // Skip if agent already has a task
+            if (agent.isPickingUpTile || agent.fillHole) {
+                continue;
+            }
+
             TWEntity bestTask = null;
             double bestScore = -1.0;
             for (TWEntity task : sortedTasks) {
                 if (task instanceof TWHole && status.tileCount > 0 && !taskManager.getAssignedHoles().containsKey(task)) {
                     int distance = taskManager.manhattanDistance(status.x, status.y, task.getX(), task.getY());
                     double priority = taskManager.calculatePriority(task);
-                    double score = priority / (distance + 1.0); // Higher priority, closer distance = better score
+                    double score = priority / (distance + 1.0);
                     if (score > bestScore && getEnvironment().getObjectGrid().get(task.getX(), task.getY()) != null) {
                         bestTask = task;
                         bestScore = score;
@@ -180,38 +148,70 @@ public class AgentD extends SpiralSearchingAgent {
             }
         }
     }
-    private void sendTaskMessage(String agentName, String taskType, int x, int y) {
-        String message = String.format("TASK:%s:%d,%d", taskType, x, y);
-        ExtendedMessage em = new ExtendedMessage(
-            this.name,           // From: AgentD
-            agentName,          // To: specific agent
-            message,            // Message content
-            MessageType.TARGET_ASSIGNMENT, // Message type
-            null                // No payload needed
-        );
-        getEnvironment().receiveMessage(em);
-        System.out.println(name + " assigned " + taskType + " at (" + x + "," + y + ") to " + agentName);
-    }
-    
-    // Helper method to get agent instance by name (simplified from TaskManager)
-    private SpiralSearchingAgent getAgentByName(String name) {
-        ObjectGrid2D agentGrid = getEnvironment().getAgentGrid();
-        for (int x = 0; x < getEnvironment().getxDimension(); x++) {
-            for (int y = 0; y < getEnvironment().getyDimension(); y++) {
-                Object obj = agentGrid.get(x, y);
-                if (obj instanceof SpiralSearchingAgent && 
-                    ((SpiralSearchingAgent) obj).getName().equals(name)) {
-                    return (SpiralSearchingAgent) obj;
+
+    @Override
+    protected void processMessages() {
+        super.processMessages();
+        System.out.println(name + " processing " + getEnvironment().getMessages().size() + " messages");
+        for (Message m : getEnvironment().getMessages()) {
+            if (m instanceof ExtendedMessage) {
+                ExtendedMessage em = (ExtendedMessage) m;
+                System.out.println(name + " received message: " + em.getMessage() + " from " + em.getFrom() + " to " + em.getTo());
+                if (em.getTo().equals(this.name)) {
+                    if (em.getType() == MessageType.POSITION_REPORT) {
+                        String[] parts = em.getMessage().split(":")[1].split(",");
+                        if (parts.length == 4) {
+                            try {
+                                int x = Integer.parseInt(parts[0]);
+                                int y = Integer.parseInt(parts[1]);
+                                int tileCount = Integer.parseInt(parts[2]);
+                                double fuelLevel = Double.parseDouble(parts[3]);
+                                String fromAgent = em.getFrom();
+                                teamStatus.put(fromAgent, new AgentStatus(x, y, fuelLevel, tileCount));
+                                System.out.println(name + " received status from " + fromAgent + 
+                                                   ": x=" + x + ", y=" + y + ", tiles=" + tileCount + 
+                                                   ", fuel=" + fuelLevel);
+                            } catch (NumberFormatException e) {
+                                System.out.println(name + " failed to parse status message: " + em.getMessage());
+                            }
+                        }
+                    } else if (em.getType() == MessageType.TASK_COMPLETE) {
+                        String[] parts = em.getMessage().split(":");
+                        if (parts.length == 3) {
+                            String taskType = parts[1];
+                            String[] coords = parts[2].split(",");
+                            int x = Integer.parseInt(coords[0]);
+                            int y = Integer.parseInt(coords[1]);
+                            TWEntity entity = (TWEntity) getEnvironment().getObjectGrid().get(x, y);
+                            String fromAgent = em.getFrom();
+                            if (entity != null) {
+                                taskManager.completeTask(fromAgent, entity);
+                                ((SmartMemory) memory).removeObject(entity);
+                                System.out.println(name + " recorded task completion by " + fromAgent + 
+                                                   ": " + taskType + " at (" + x + "," + y + ")");
+                            } else {
+                                System.out.println(name + " task at (" + x + "," + y + ") no longer exists");
+                                if (taskType.equals("TILE")) {
+                                    TWTile dummyTile = new TWTile(x, y, getEnvironment(), 0.0, 0.0);
+                                    taskManager.completeTask(fromAgent, dummyTile);
+                                    ((SmartMemory) memory).removeObject(dummyTile);
+                                } else if (taskType.equals("HOLE")) {
+                                    TWHole dummyHole = new TWHole(x, y, getEnvironment(), 0.0, 0.0);
+                                    taskManager.completeTask(fromAgent, dummyHole);
+                                    ((SmartMemory) memory).removeObject(dummyHole);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        return null;
     }
+
     public boolean sameLocation(TWEntity target) {
         return getX() == target.getX() && getY() == target.getY();
     }
 
-    // Optional: Method to access teamStatus for debugging or later use
     public Map<String, AgentStatus> getTeamStatus() {
         return new HashMap<>(teamStatus);
     }

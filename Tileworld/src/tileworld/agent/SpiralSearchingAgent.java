@@ -430,6 +430,18 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         getEnvironment().receiveMessage(em);
         System.out.println(name + " reported " + taskType + " task complete at (" + x + "," + y + ")");
     }
+    protected void sendTaskMessage(String agentName, String taskType, int x, int y) {
+        String message = String.format("TASK:%s:%d,%d", taskType, x, y);
+        ExtendedMessage em = new ExtendedMessage(
+            this.name,          // From: this agent (manager)
+            agentName,         // To: target agent
+            message,           // Message content
+            MessageType.TARGET_ASSIGNMENT, // Message type
+            null               // No payload needed
+        );
+        getEnvironment().receiveMessage(em);
+        // Optional: Add logging if desired later
+    }
     
     
     protected void setMinFuelLevel() {
