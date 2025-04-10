@@ -10,10 +10,10 @@ import java.util.*;
 public class TaskManager implements Steppable {
     private final TWEnvironment environment;
     private Map<TWHole, SpiralSearchingAgent> assignedHoles;
-    private Map<TWTile, SpiralSearchingAgent> assignedTiles;
+    protected Map<TWTile, SpiralSearchingAgent> assignedTiles;
     private Map<String, Boolean> activeAgents;
-    private PriorityQueue<TWHole> availableHoles;
-    private Set<TWTile> availableTiles;
+    PriorityQueue<TWHole> availableHoles;
+    Set<TWTile> availableTiles;
     private PriorityQueue<TaskPriority> taskQueue;
     private Map<TWEntity, Double> entityDecayRates;
     private Map<TWEntity, TaskPriority> priorityCache;
@@ -172,7 +172,7 @@ public class TaskManager implements Steppable {
         return (1.0 / distance) * timeLeft;
     }
 
-    private int manhattanDistance(int x1, int y1, int x2, int y2) {
+    int manhattanDistance(int x1, int y1, int x2, int y2) {
         return Math.abs(x2 - x1) + Math.abs(y2 - y1);
     }
 
@@ -221,14 +221,11 @@ public class TaskManager implements Steppable {
     public double calculatePriority(TWEntity entity) {
         if (entity == null) return 0.0;
 
-        // Check cache first
         if (priorityCache.containsKey(entity)) {
-            // Get the current priority value from the cached TaskPriority object
             return priorityCache.get(entity).getCurrentPriority(environment.schedule.getTime());
         }
 
         double priority = 0.0;
-
         if (entity instanceof TWHole) {
             TWHole hole = (TWHole) entity;
             double timeLeft = hole.getTimeLeft(environment.schedule.getTime());
@@ -237,24 +234,24 @@ public class TaskManager implements Steppable {
             priority = 0.5; // Base priority for tiles
         }
 
-        // Create and cache a TaskPriority object
+        // Ensure priority is non-negative
+        if (priority < 0 || Double.isNaN(priority)) {
+            priority = 0.0;
+            System.out.println("Adjusted invalid priority for " + entity.getClass().getSimpleName() + 
+                               " at (" + entity.getX() + "," + entity.getY() + ") to 0.0");
+        }
+
         double decayRate = estimateDecayRate(entity);
         TaskPriority taskPriority = new TaskPriority(entity, priority, decayRate);
         priorityCache.put(entity, taskPriority);
-        
         return priority;
     }
 
     private double calculateHolePriority(TWHole hole, double timeLeft) {
         if (timeLeft <= 0) return 0.0;
-
-        // Higher priority for holes that are about to expire
-        double urgencyFactor = 1.0 / (timeLeft + 1);
-
-        // Consider hole's position and surrounding context
+        double urgencyFactor = 1.0 / (timeLeft + 1); // Always positive since timeLeft + 1 > 0
         double positionFactor = calculatePositionFactor(hole);
-
-        return urgencyFactor * positionFactor * 10.0; // Scale factor
+        return urgencyFactor * positionFactor * 10.0; // Should be positive unless positionFactor is negative
     }
 
     private double calculatePositionFactor(TWHole hole) {
@@ -396,13 +393,28 @@ public class TaskManager implements Steppable {
         List<SpiralSearchingAgent> availableAgents = getAvailableAgents();
         List<TWEntity> availableTasks = getAvailableTasks();
 
+        System.out.println("Optimizing tasks: Agents=" + availableAgents.size() + ", Tasks=" + availableTasks.size());
+
+        // Debug: Log the state before optimization
+        for (SpiralSearchingAgent agent : availableAgents) {
+            System.out.println("Agent: " + agent.getName() + " at (" + agent.getX() + "," + agent.getY() + 
+                               "), Fuel=" + agent.getFuelLevel() + ", Tiles=" + agent.carriedTiles.size());
+        }
+        for (TWEntity task : availableTasks) {
+            System.out.println("Task: " + task.getClass().getSimpleName() + " at (" + task.getX() + "," + task.getY() + ")");
+        }
+
+        // Check for empty or mismatched lists
         if (availableAgents.isEmpty() || availableTasks.isEmpty()) {
+            System.out.println("Skipping optimization: No agents or tasks available");
             return;
         }
 
-        double[][] costMatrix = new double[availableAgents.size()][availableTasks.size()];
+        int rows = availableAgents.size();
+        int cols = Math.max(availableTasks.size(), rows);
+        double[][] costMatrix = new double[rows][cols];
 
-        for (int i = 0; i < availableAgents.size(); i++) {
+        for (int i = 0; i < rows; i++) {
             SpiralSearchingAgent agent = availableAgents.get(i);
             for (int j = 0; j < availableTasks.size(); j++) {
                 TWEntity task = availableTasks.get(j);
@@ -410,15 +422,32 @@ public class TaskManager implements Steppable {
                 double priority = calculatePriority(task);
                 boolean canHandle = canAgentHandleTask(agent, task);
 
-                costMatrix[i][j] = canHandle ? distance / (priority + 0.1) : Double.MAX_VALUE;
+                // Sanitize priority to prevent NaN
+                if (Double.isNaN(priority) || priority < 0) {
+                    priority = 0.0; // Default to zero if invalid
+                    System.out.println("Invalid priority for task at (" + task.getX() + "," + task.getY() + "): " + priority);
+                }
+                double cost = canHandle ? distance / (priority + 0.1) : Double.MAX_VALUE;
+                if (Double.isNaN(cost) || Double.isInfinite(cost)) {
+                    cost = Double.MAX_VALUE; // Ensure no NaN or Infinity
+                }
+                costMatrix[i][j] = cost;
+            }
+            for (int j = availableTasks.size(); j < cols; j++) {
+                costMatrix[i][j] = Double.MAX_VALUE;
             }
         }
 
-        int[] assignments = new HungarianAlgorithm(costMatrix).execute();
+        // Debug cost matrix
+        System.out.println("Cost Matrix:");
+        for (int i = 0; i < rows; i++) {
+            System.out.println("Agent " + i + ": " + Arrays.toString(costMatrix[i]));
+        }
 
+        int[] assignments = new HungarianAlgorithm(costMatrix).execute();
         for (int i = 0; i < assignments.length; i++) {
             int taskIndex = assignments[i];
-            if (taskIndex >= 0 && costMatrix[i][taskIndex] < Double.MAX_VALUE) {
+            if (taskIndex >= 0 && taskIndex < availableTasks.size() && costMatrix[i][taskIndex] < Double.MAX_VALUE) {
                 SpiralSearchingAgent agent = availableAgents.get(i);
                 TWEntity task = availableTasks.get(taskIndex);
                 assignTaskToAgent(agent, task);
@@ -428,16 +457,13 @@ public class TaskManager implements Steppable {
 
     private boolean canAgentHandleTask(SpiralSearchingAgent agent, TWEntity task) {
         int distance = manhattanDistance(agent.getX(), agent.getY(), task.getX(), task.getY());
-        int fuelNeeded = distance + (int) (distance * 0.2);
+        int fuelNeeded = distance; // Simplified: just distance, no extra buffer
 
         if (task instanceof TWHole) {
-            // Change from agent.sensor.getCarriedTiles() to agent.carriedTiles
             return !agent.carriedTiles.isEmpty() && agent.getFuelLevel() >= fuelNeeded;
         } else if (task instanceof TWTile) {
-            // Change from agent.sensor.getCarriedTiles() to agent.carriedTiles
-            return agent.carriedTiles.isEmpty() && agent.getFuelLevel() >= fuelNeeded;
+            return agent.carriedTiles.size() < 3 && agent.getFuelLevel() >= fuelNeeded; // Allow partial capacity
         }
-
         return false;
     }
 
@@ -497,7 +523,7 @@ public class TaskManager implements Steppable {
         return null;
     }
 
-    private List<SpiralSearchingAgent> getAvailableAgents() {
+    List<SpiralSearchingAgent> getAvailableAgents() {
         List<SpiralSearchingAgent> result = new ArrayList<>();
         // Iterate through the agent grid to find all SpiralSearchingAgents
         ObjectGrid2D agentGrid = environment.getAgentGrid();
@@ -512,7 +538,7 @@ public class TaskManager implements Steppable {
         return result;
     }
 
-    private List<TWEntity> getAvailableTasks() {
+    List<TWEntity> getAvailableTasks() {
         List<TWEntity> tasks = new ArrayList<>(availableHoles);
         tasks.addAll(availableTiles);
         return tasks;
@@ -651,6 +677,11 @@ public class TaskManager implements Steppable {
                             minSlackJob = j;
                         }
                     }
+                }
+                if (minSlackJob == -1) {
+                    System.out.println("Hungarian Algorithm failed: No valid job found. Slack values: " + 
+                                       Arrays.toString(minSlackValueByJob));
+                    return; // Exit gracefully to avoid exception
                 }
                 if (minSlackValue > 0) {
                     updateLabeling(minSlackValue);

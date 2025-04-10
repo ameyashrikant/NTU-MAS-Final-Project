@@ -1,5 +1,6 @@
 package tileworld.agent;
 import tileworld.environment.TWDirection;
+import tileworld.environment.TWEntity;
 import tileworld.environment.TWFuelStation;
 import tileworld.EnvParameters;
 import tileworld.environment.TWTile;
@@ -51,7 +52,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
     
     // PICKUP:time,x,y
     // FILL:time,x,y
-    private void processMessages() {
+    protected void processMessages() {
     	for (Message m: getEnvironment().getMessages()) {
     		String message = m.getMessage();
     		if (m.getFrom().equals(name) || isHeadingToFuelStation) {
@@ -116,7 +117,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         processMessages();
         
         if (getFuelLevel() < MIN_FUEL_LEVEL || isHeadingToFuelStation) { 
-             System.out.println("STAGE: REFUELLING");
+//             System.out.println("STAGE: REFUELLING");
              isHeadingToFuelStation = true;
              tileToBePickedUp = null;
              holeToBeFilled = null;
@@ -143,12 +144,18 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         }
 
         if (carriedTiles.size() < 3 && !fillHole) {
-//             System.out.println("STAGE: SEEKING/PICKING UP TILES");
-             if (isPickingUpTile && tileToBePickedUp != null) {
-                  if (this.sameLocation(tileToBePickedUp)) {
-                       currentPath = null; 
-                       return new TWThought(TWAction.PICKUP, TWDirection.Z);
-                  }
+            if (isPickingUpTile && tileToBePickedUp != null) {
+                TWEntity envTile = (TWEntity) getEnvironment().getObjectGrid().get(tileToBePickedUp.getX(), tileToBePickedUp.getY());
+                if (envTile == null || !(envTile instanceof TWTile)) {
+                    memory.removeObject(tileToBePickedUp);
+                    tileToBePickedUp = null;
+                    isPickingUpTile = false;
+                    return fallbackMovement();
+                }
+                if (this.sameLocation(tileToBePickedUp)) {
+                    currentPath = null;
+                    return new TWThought(TWAction.PICKUP, TWDirection.Z);
+                }
                   if (currentPath == null || currentPathTargetX != tileToBePickedUp.getX() || currentPathTargetY != tileToBePickedUp.getY()) {
                        System.out.println(name + " calculating path to Tile: " + tileToBePickedUp.getX() + "," + tileToBePickedUp.getY());
                        currentPath = pathGenerator.findPath(getX(), getY(), tileToBePickedUp.getX(), tileToBePickedUp.getY());
@@ -168,7 +175,7 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                   return followCurrentPath();
              } else {
                  tileToBePickedUp = this.memory.getNearbyTile(getX(), getY(), 20);
-                 if (tileToBePickedUp != null) {
+                 if (tileToBePickedUp != null && getEnvironment().getObjectGrid().get(tileToBePickedUp.getX(), tileToBePickedUp.getY()) != null) {
                      isPickingUpTile = true;
                      pickingUpTime = (int) this.getEnvironment().schedule.getTime();
                      String message = "PICKUP:"+ pickingUpTime + "," + tileToBePickedUp.getX() + "," + tileToBePickedUp.getY();
@@ -176,20 +183,24 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                      return new TWThought(TWAction.MOVE, TWDirection.Z); 
                  } else {
                      isPickingUpTile = false;
-                     return fallbackMovement(); 
+                     return fallbackMovement();
                  }
              }
         }
 
-        if (carriedTiles.size() > 0 || fillHole) { 
-//            System.out.println("STAGE: SEEKING/FILLING HOLES");
-             fillHole = true; // Remember the high-level goal
-
-             if (holeToBeFilled != null) {
-                  if (this.sameLocation(holeToBeFilled)) {
-                       currentPath = null; 
-                       return new TWThought(TWAction.PUTDOWN, TWDirection.Z);
-                  }
+        if (carriedTiles.size() > 0 || fillHole) {
+            if (holeToBeFilled != null) {
+                TWEntity envHole = (TWEntity) getEnvironment().getObjectGrid().get(holeToBeFilled.getX(), holeToBeFilled.getY());
+                if (envHole == null || !(envHole instanceof TWHole)) {
+                    memory.removeObject(holeToBeFilled);
+                    holeToBeFilled = null;
+                    fillHole = false;
+                    return fallbackMovement();
+                }
+                if (this.sameLocation(holeToBeFilled)) {
+                    currentPath = null;
+                    return new TWThought(TWAction.PUTDOWN, TWDirection.Z);
+                }
                  if (currentPath == null || currentPathTargetX != holeToBeFilled.getX() || currentPathTargetY != holeToBeFilled.getY()) {
                      System.out.println(name + " calculating path to Hole: " + holeToBeFilled.getX() + "," + holeToBeFilled.getY());
                      currentPath = pathGenerator.findPath(getX(), getY(), holeToBeFilled.getX(), holeToBeFilled.getY());
@@ -206,14 +217,14 @@ public abstract class SpiralSearchingAgent extends TWAgent {
                  sendMessage(message);
                  return followCurrentPath();
             } else {
-                 holeToBeFilled = this.memory.getNearbyHole(getX(), getY(), 20);
-                 if (holeToBeFilled != null) {
+                holeToBeFilled = this.memory.getNearbyHole(getX(), getY(), 20);
+                if (holeToBeFilled != null && getEnvironment().getObjectGrid().get(holeToBeFilled.getX(), holeToBeFilled.getY()) != null) {
                 	 fillingTime = (int) this.getEnvironment().schedule.getTime();
                      String message = "FILL:"+ fillingTime + "," + holeToBeFilled.getX() + "," + holeToBeFilled.getY();
                      sendMessage(message);
                 	 return new TWThought(TWAction.MOVE, TWDirection.Z); // Wait for path calc
                  } else {
-                     fillHole = false; // Stop trying to fill if none are found nearby? Decision needed.
+                     fillHole = false;
                      return fallbackMovement();
                  }
              }
@@ -320,6 +331,9 @@ public abstract class SpiralSearchingAgent extends TWAgent {
         TWDirection direction = thought.getDirection();
         TWAction action = thought.getAction();
 
+        int prevTileCount = carriedTiles.size();
+        System.out.println(name + " acting: " + action + ", Tiles before=" + prevTileCount);
+
         if (action == TWAction.REFUEL) {
             try {
                 refuel();
@@ -327,94 +341,94 @@ public abstract class SpiralSearchingAgent extends TWAgent {
             } catch (Exception ignored) {
                 System.out.println(name + " failed to refuel");
             }
-            isHeadingToFuelStation = false; // Reset goal flag
-            currentPath = null; // Clear path, goal achieved or failed
+            isHeadingToFuelStation = false;
+            currentPath = null;
             currentPathTargetX = -1;
             currentPathTargetY = -1;
-            return; 
-        }
-
-        if (action == TWAction.PICKUP) {
+        } else if (action == TWAction.PICKUP) {
             if (tileToBePickedUp == null) {
-                 System.out.println(name + " tried to pickup but tileToBePickedUp is null!");
-                 isPickingUpTile = false; // Reset state
-                 currentPath = null; // Clear any path associated with this failed goal
-                 currentPathTargetX = -1;
-                 currentPathTargetY = -1;
-                 return;
-            }
-            if (getEnvironment().canPickupTile(tileToBePickedUp, this)) {
+                System.out.println(name + " skipped pickup due to null tileToBePickedUp");
+            } else if (getEnvironment().canPickupTile(tileToBePickedUp, this)) {
                 try {
                     this.pickUpTile(tileToBePickedUp);
-                    this.memory.removeObject(tileToBePickedUp); // Remove from memory ONLY on successful pickup
+                    this.memory.removeObject(tileToBePickedUp);
                     System.out.println(name + " picked up a tile. Contains " + carriedTiles.size() + " tiles");
                     if (carriedTiles.size() == 3) {
                         fillHole = true;
                         System.out.println(name + " will fill holes now");
                     }
+                    sendTaskCompleteMessage("TILE", tileToBePickedUp.getX(), tileToBePickedUp.getY());
                 } catch (Exception e) {
-                     System.out.println(name + " Exception during pickup for tile at ("+ tileToBePickedUp.getX() + "," + tileToBePickedUp.getY() +"): " + e.getMessage());
-                     this.memory.removeObject(tileToBePickedUp);
+                    System.out.println(name + " Exception during pickup: " + e.getMessage());
+                    this.memory.removeObject(tileToBePickedUp);
                 }
+                tileToBePickedUp = null;
+                isPickingUpTile = false;
+                currentPath = null;
+                currentPathTargetX = -1;
+                currentPathTargetY = -1;
             } else {
-                System.out.println(name + " Cannot pickup tile at ("+ tileToBePickedUp.getX() + "," + tileToBePickedUp.getY() +"), environment check failed.");
+                System.out.println(name + " Cannot pickup tile at (" + tileToBePickedUp.getX() + "," + 
+                                   tileToBePickedUp.getY() + "), environment check failed");
                 this.memory.removeObject(tileToBePickedUp);
+                tileToBePickedUp = null;
+                isPickingUpTile = false;
+                currentPath = null;
+                currentPathTargetX = -1;
+                currentPathTargetY = -1;
             }
-            tileToBePickedUp = null;
-            isPickingUpTile = false;
-            currentPath = null; // Path objective completed or failed
-            currentPathTargetX = -1;
-            currentPathTargetY = -1;
-            return; 
-        }
-        if (action == TWAction.PUTDOWN) {
+        } else if (action == TWAction.PUTDOWN) {
             if (holeToBeFilled == null) {
-                System.out.println(name + " tried to putdown but holeToBeFilled is null!");
-                 currentPath = null; // Clear any path associated with this failed goal
-                 currentPathTargetX = -1;
-                 currentPathTargetY = -1;
-                 return;
-            }
-            if (getEnvironment().canPutdownTile(holeToBeFilled, this)) {
-                 try {
-                      this.putTileInHole(holeToBeFilled);
-                      this.memory.removeObject(holeToBeFilled); // Remove from memory ONLY on success
-                      System.out.println(name + " has filled a hole at ("+ holeToBeFilled.getX() + "," + holeToBeFilled.getY() + ")");
-                      if (carriedTiles.size() == 0) {
-                          fillHole = false; // Stop filling if out of tiles
-                          System.out.println(name + " has no more tiles, stopping hole filling mode.");
-                      }
-                 } catch (Exception e) {
-                      System.out.println(name + " Exception during putdown at ("+ holeToBeFilled.getX() + "," + holeToBeFilled.getY() +"): " + e.getMessage());
-                      this.memory.removeObject(holeToBeFilled);
-                 }
+                System.out.println(name + " skipped putdown due to null holeToBeFilled");
+            } else if (getEnvironment().canPutdownTile(holeToBeFilled, this)) {
+                try {
+                    this.putTileInHole(holeToBeFilled);
+                    this.memory.removeObject(holeToBeFilled);
+                    System.out.println(name + " has filled a hole at (" + holeToBeFilled.getX() + "," + 
+                                       holeToBeFilled.getY() + ")");
+                    if (carriedTiles.size() == 0) {
+                        fillHole = false;
+                        System.out.println(name + " has no more tiles, stopping hole filling mode");
+                    }
+                    sendTaskCompleteMessage("HOLE", holeToBeFilled.getX(), holeToBeFilled.getY());
+                } catch (Exception e) {
+                    System.out.println(name + " Exception during putdown: " + e.getMessage());
+                    this.memory.removeObject(holeToBeFilled);
+                }
+                holeToBeFilled = null;
+                currentPath = null;
+                currentPathTargetX = -1;
+                currentPathTargetY = -1;
             } else {
-                 System.out.println(name + " Cannot putdown tile at ("+ holeToBeFilled.getX() + "," + holeToBeFilled.getY() +"), environment check failed.");
-                 this.memory.removeObject(holeToBeFilled); // Remove invalid hole from memory
+                System.out.println(name + " Cannot putdown tile at (" + holeToBeFilled.getX() + "," + 
+                                   holeToBeFilled.getY() + "), environment check failed");
+                this.memory.removeObject(holeToBeFilled);
+                holeToBeFilled = null;
+                currentPath = null;
+                currentPathTargetX = -1;
+                currentPathTargetY = -1;
             }
-            holeToBeFilled = null; // Current target processed
-            currentPath = null; // Path objective completed or failed
-            currentPathTargetX = -1;
-            currentPathTargetY = -1;
-            return; 
-        }
-        if (action == TWAction.MOVE) {
-            if (direction == TWDirection.Z) {
-                return;
-            }
+        } else if (action == TWAction.MOVE && direction != TWDirection.Z) {
             try {
-            	move(direction);
-            	stepCount++;
+                move(direction);
+                stepCount++;
             } catch (Exception e) {
-            	currentPath = null;
-            	currentPathTargetX = -1;
-            	currentPathTargetY = -1;
+                currentPath = null;
+                currentPathTargetX = -1;
+                currentPathTargetY = -1;
             }
-            
-            return;
         }
-        // If action is none of the above (shouldn't happen with current TWAction types)
-        System.err.println(name + " Received unknown action type in act(): " + action);
+
+        System.out.println(name + " acted: " + action + ", Tiles after=" + carriedTiles.size());
+    }
+
+    private void sendTaskCompleteMessage(String taskType, int x, int y) {
+        String message = String.format("COMPLETE:%s:%d,%d", taskType, x, y);
+        ExtendedMessage em = new ExtendedMessage(
+            this.name, "manager", message, MessageType.TASK_COMPLETE, null
+        );
+        getEnvironment().receiveMessage(em);
+        System.out.println(name + " reported " + taskType + " task complete at (" + x + "," + y + ")");
     }
     
     
