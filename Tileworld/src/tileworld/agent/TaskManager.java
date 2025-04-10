@@ -231,10 +231,15 @@ public class TaskManager implements Steppable {
             double timeLeft = hole.getTimeLeft(environment.schedule.getTime());
             priority = calculateHolePriority(hole, timeLeft);
         } else if (entity instanceof TWTile) {
-            priority = 0.5; // Base priority for tiles
+            // Dynamic priority based on distance to nearest unfilled hole
+            double minDistanceToHole = getDistanceToNearestHole((TWTile) entity);
+            // Higher priority for tiles closer to holes (inverse relationship)
+            priority = 1.0 / (minDistanceToHole + 1.0); // Range: ~0 to 1, higher when closer
+            // Optional: Add a base value to ensure tiles are always considered
+            priority = 0.5 + priority; // Base of 0.5 plus distance-based boost
         }
 
-        // Ensure priority is non-negative
+        // Ensure priority is non-negative and valid
         if (priority < 0 || Double.isNaN(priority)) {
             priority = 0.0;
             System.out.println("Adjusted invalid priority for " + entity.getClass().getSimpleName() + 
